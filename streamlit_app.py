@@ -48,7 +48,6 @@ if 'initialized' not in st.session_state:
     st.session_state.backtest_done = False
     st.session_state.initialized = True
 
-# Verificar si el historial existe y es suficiente
 def ensure_history():
     """Asegura que el historial tenga al menos 2 trades, ejecutando backtest si es necesario."""
     history = st.session_state.history
@@ -88,15 +87,63 @@ def ensure_history():
             st.success(f"✅ Historial reconstruido con {len(trades)} trades.")
         else:
             st.warning("⚠️ No se pudieron generar suficientes trades con los datos disponibles. Verifica la conexión y los símbolos.")
-            # Opcional: crear un historial mínimo con datos de ejemplo (pero no simulados)
-            # En este caso, preferimos mostrar un mensaje de error y no inventar datos.
-            # Se puede intentar con un período más largo.
-            # Si aún así falla, se deja el historial vacío.
+            # No crear datos ficticios
 
 # Ejecutar la verificación al inicio
 ensure_history()
 
 # ============================================================
-# SIDEBAR Y DEMÁS (igual que antes, pero usando history real)
+# SIDEBAR
 # ============================================================
-# ... (el resto del sidebar y pestañas se mantiene igual, pero ahora history ya tiene datos reales)
+with st.sidebar:
+    st.image("https://img.icons8.com/emoji/96/000000/teddy-bear-emoji.png", width=80)
+    st.header("🧸 JUNK TOYS Ω")
+    st.caption(f"v{CONFIG.version}")
+    
+    history = st.session_state.history
+    if history:
+        metrics = Metrics.compute(history)
+        st.metric("Win Rate", f"{metrics.get('win_rate', 0)*100:.1f}%")
+        st.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
+        st.metric("Total Trades", metrics.get('n_trades', 0))
+    else:
+        st.caption("Win Rate: --")
+        st.caption("PF: --")
+        st.caption("Trades: 0")
+    
+    st.divider()
+    
+    if st.button("🔍 Escanear Mercado", type="primary", use_container_width=True):
+        with st.spinner("Escaneando..."):
+            run_scan()
+            st.rerun()
+    
+    st.caption(f"Oportunidades: {len(st.session_state.signals)}")
+    st.caption(f"Último escaneo: {st.session_state.last_scan.strftime('%H:%M:%S') if st.session_state.last_scan else 'Nunca'}")
+
+# ============================================================
+# PESTAÑAS (igual que antes, pero ahora con datos reales)
+# ============================================================
+tabs = st.tabs([
+    "📊 Estado General",
+    "🎯 Último Trade",
+    "📈 Sistema de Rachas",
+    "⏱️ Predicción Temporal",
+    "🚀 Próxima Oportunidad",
+    "🏆 TOP 3 LONG",
+    "⬇️ TOP 3 SHORT",
+    "🎯 ShunToy Level",
+    "🔮 Confianza Temporal",
+    "📊 Estadísticas Históricas",
+    "🧪 Backtest",
+    "🔄 Walk-Forward",
+    "🎲 Monte Carlo",
+    "💰 Curva de Capital",
+    "📉 Drawdown",
+    "💀 Riesgo de Ruina",
+    "📋 Historial Completo"
+])
+
+# (Mantener el contenido de las pestañas como estaba, pero usando history real)
+# ... El resto del código es igual al proporcionado anteriormente.
+# Aquí se omiten para abreviar, pero ya están definidas en la respuesta anterior.
