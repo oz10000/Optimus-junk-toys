@@ -1,43 +1,37 @@
-# top_opportunities.py (versión que siempre muestra Top 3)
+# top_opportunities.py
 import numpy as np
 from typing import Dict, List
 
 class TopOpportunities:
     @staticmethod
     def compute(signals: List[Dict]) -> Dict:
-        # Separar
         longs = [s for s in signals if s.get('direction') == 'LONG']
         shorts = [s for s in signals if s.get('direction') == 'SHORT']
         neutrals = [s for s in signals if s.get('direction') == 'NEUTRAL']
 
-        # Enriquecer
         longs_enriched = [TopOpportunities._enrich_signal(s) for s in longs]
         shorts_enriched = [TopOpportunities._enrich_signal(s) for s in shorts]
         neutrals_enriched = [TopOpportunities._enrich_signal(s) for s in neutrals]
 
-        # Ordenar por edge (incluso los neutros)
         all_signals = longs_enriched + shorts_enriched + neutrals_enriched
         all_sorted = sorted(all_signals, key=lambda x: x.get('edge', 0), reverse=True)
 
-        # Si no hay señales, crear señales dummy para mostrar el Top 3
+        # Si no hay señales, crear 3 dummy para cada dirección
         if not all_sorted:
-            dummy = TopOpportunities._dummy_signal()
-            all_sorted = [dummy] * 3
-
-        # Top 3 de cada dirección (forzando al menos 3)
-        top_long = [s for s in all_sorted if s.get('direction') == 'LONG'][:3]
-        top_short = [s for s in all_sorted if s.get('direction') == 'SHORT'][:3]
-
-        # Si no hay suficientes longs, rellenar con neutros
-        while len(top_long) < 3:
-            top_long.append(TopOpportunities._dummy_signal('LONG'))
-
-        while len(top_short) < 3:
-            top_short.append(TopOpportunities._dummy_signal('SHORT'))
+            longs = [TopOpportunities._dummy_signal('LONG') for _ in range(3)]
+            shorts = [TopOpportunities._dummy_signal('SHORT') for _ in range(3)]
+        else:
+            longs = [s for s in all_sorted if s.get('direction') == 'LONG'][:3]
+            shorts = [s for s in all_sorted if s.get('direction') == 'SHORT'][:3]
+            # Rellenar con neutros si faltan
+            while len(longs) < 3:
+                longs.append(TopOpportunities._dummy_signal('LONG'))
+            while len(shorts) < 3:
+                shorts.append(TopOpportunities._dummy_signal('SHORT'))
 
         return {
-            'top_long': top_long,
-            'top_short': top_short,
+            'top_long': longs,
+            'top_short': shorts,
             'all_signals': all_sorted,
             'timestamp': np.datetime64('now').astype(str),
             'total_signals': len(signals),
