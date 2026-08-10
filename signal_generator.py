@@ -2,93 +2,87 @@
 from typing import Dict, Optional
 from datetime import datetime
 
-
 class SignalGenerator:
-    """
-    Genera señales formateadas a partir de decisiones del DecisionEngine.
-    """
-
     @staticmethod
-    def generate(decision: Dict) -> Optional[Dict]:
-        """
-        Convierte una decisión en señal completa.
-        Retorna None si la decisión es inválida o es HOLD.
-        """
+    def generate(decision: Dict) -> Dict:
+        """Siempre devuelve una señal, incluso si es NEUTRAL o HOLD."""
         if decision is None:
-            return None
+            return SignalGenerator._empty_signal()
 
-        # Si es HOLD o NEUTRAL, no generar señal
         action = decision.get('action', 'HOLD')
         direction = decision.get('direction', 'NEUTRAL')
-        if action == 'HOLD' or direction == 'NEUTRAL':
-            return None
-
-        # Extraer datos
-        edge_data = decision.get('edge_data', {})
-        next_est = decision.get('next_trade_est', {})
-
-        # Calcular TP price correctamente
         entry = decision.get('entry_price', 0)
+
+        # Si es HOLD, dirección NEUTRAL
+        if action == 'HOLD':
+            direction = 'NEUTRAL'
+
         tp_pct = decision.get('tp_pct', 0.04)
         if direction == 'LONG':
             tp_price = entry * (1 + tp_pct)
-        else:
+        elif direction == 'SHORT':
             tp_price = entry * (1 - tp_pct)
+        else:
+            tp_price = entry
+
+        edge = decision.get('edge', 0)
+        confidence = decision.get('confidence', 0)
+        approved = edge > CONFIG.edge_threshold_low and confidence > CONFIG.confidence_threshold
 
         return {
-            # ===== IDENTIFICACIÓN =====
             'symbol': decision.get('symbol', 'unknown'),
             'direction': direction,
+            'action': action,
             'timestamp': decision.get('timestamp', datetime.now()),
-
-            # ===== PRECIOS =====
             'entry': entry,
             'sl': decision.get('sl_price', 0),
             'tp': tp_price,
             'sl_pct': decision.get('sl_pct', 0.02),
-            'tp_pct': decision.get('tp_pct', 0.04),
-
-            # ===== SCORING =====
+            'tp_pct': tp_pct,
+            'edge': edge,
+            'edge_pct': edge * 100,
+            'confidence': confidence,
+            'approved': approved,
+            'classification': decision.get('classification', 'Sin señal'),
+            'label': decision.get('label', 'N/A'),
             'score': decision.get('score', 0),
-            'adx': decision.get('adx', 0),
-            'ker': decision.get('ker', 0),
             'regime': decision.get('regime', 'Normal'),
             'volatility': decision.get('volatility', 0),
-            'pidelta': decision.get('pidelta', 0),
-            'consensus_score': decision.get('consensus_score', 0),
-
-            # ===== EXPECTED EDGE =====
-            'edge': decision.get('edge', 0),
-            'edge_pct': decision.get('edge_pct', 0),
-            'classification': decision.get('classification', 'Evitar'),
-            'label': decision.get('label', 'E'),
-            'confidence': decision.get('confidence', 0.5),
-            'win_rate': decision.get('win_rate', 0.55),
-            'profit_factor': decision.get('profit_factor', 1.2),
+            'win_rate': decision.get('win_rate', 0),
+            'profit_factor': decision.get('profit_factor', 0),
             'risk_of_ruin': decision.get('risk_of_ruin', 1.0),
             'expected_pnl_per_trade': decision.get('expected_pnl_per_trade', 0),
-            'expected_pnl_daily': decision.get('expected_pnl_daily', 0),
-
-            # ===== LEVERAGE =====
             'leverage_recommended': decision.get('leverage_recommended', 1),
-            'leverage_max': decision.get('leverage_max', 1),
+            'next_trade_remaining': decision.get('next_trade_est', {}).get('remaining_minutes', 0),
+            'next_trade_confidence': decision.get('next_trade_est', {}).get('confidence', 0),
+        }
 
-            # ===== CONSENSO =====
-            'consensus_direction': decision.get('consensus_direction', 'NEUTRAL'),
-            'consensus_score': decision.get('consensus_score', 0),
-
-            # ===== TIEMPO =====
-            'time_since_last_trade': decision.get('time_since_last_trade', 0),
-            'next_trade_remaining': next_est.get('remaining_minutes', 0),
-            'next_trade_confidence': next_est.get('confidence', 0),
-
-            # ===== BREAK EVEN =====
-            'be_trigger': decision.get('be_trigger', 0),
-
-            # ===== MÉTRICAS =====
-            'avg_duration_used': decision.get('avg_duration_used', 0),
-            'trades_per_day_used': decision.get('trades_per_day_used', 0),
-
-            # ===== GENERACIÓN =====
-            'generated_at': datetime.now().isoformat()
+    @staticmethod
+    def _empty_signal():
+        return {
+            'symbol': 'N/A',
+            'direction': 'NEUTRAL',
+            'action': 'HOLD',
+            'timestamp': datetime.now(),
+            'entry': 0,
+            'sl': 0,
+            'tp': 0,
+            'sl_pct': 0,
+            'tp_pct': 0,
+            'edge': 0,
+            'edge_pct': 0,
+            'confidence': 0,
+            'approved': False,
+            'classification': 'Sin datos',
+            'label': 'N/A',
+            'score': 0,
+            'regime': 'Normal',
+            'volatility': 0,
+            'win_rate': 0,
+            'profit_factor': 0,
+            'risk_of_ruin': 1.0,
+            'expected_pnl_per_trade': 0,
+            'leverage_recommended': 1,
+            'next_trade_remaining': 0,
+            'next_trade_confidence': 0,
         }
