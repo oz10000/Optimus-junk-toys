@@ -4,11 +4,28 @@
 Todos los parámetros ajustables del sistema se definen aquí.
 """
 
+import os
+
 class CONFIG:
     # ============================================================
     # VERSIÓN
     # ============================================================
     version = '9.0.0'
+
+    # ============================================================
+    # RUTAS DE DIRECTORIOS
+    # ============================================================
+    # Directorio raíz del proyecto (se calcula automáticamente)
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    # Directorio para caché de datos (donde se guardan archivos temporales)
+    cache_dir = os.path.join(ROOT_DIR, 'cache')
+
+    # Directorio para datos persistentes (historial, configuraciones, etc.)
+    data_dir = os.path.join(ROOT_DIR, 'data')
+
+    # Directorio para logs
+    log_dir = os.path.join(ROOT_DIR, 'logs')
 
     # ============================================================
     # ACTIVOS A MONITOREAR (UNIVERSO)
@@ -60,3 +77,16 @@ class CONFIG:
     # MODO DEBUG
     # ============================================================
     debug = False              # Activar logs detallados
+
+    # ============================================================
+    # CREAR DIRECTORIOS SI NO EXISTEN (ejecutar al inicio)
+    # ============================================================
+    @classmethod
+    def ensure_directories(cls):
+        """Crea los directorios necesarios si no existen."""
+        for dir_path in [cls.cache_dir, cls.data_dir, cls.log_dir]:
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+
+# Crear directorios automáticamente al importar
+CONFIG.ensure_directories()
