@@ -1,38 +1,62 @@
 # performance.py
+import numpy as np
+import pandas as pd
 from typing import List, Dict
-from metrics import Metrics
 from collections import defaultdict
+from metrics import Metrics
 
 class Performance:
-    """Análisis de rendimiento por activo, horario, día y régimen."""
+    @staticmethod
+    def by_asset(trades: List[Dict]) -> Dict[str, Dict]:
+        if not trades:
+            return {}
+        grouped = defaultdict(list)
+        for t in trades:
+            symbol = t.get('symbol', 'unknown')
+            grouped[symbol].append(t)
+        result = {}
+        for symbol, group in grouped.items():
+            result[symbol] = Metrics.compute(group)
+        return result
 
     @staticmethod
-    def by_asset(trades: List[Dict]) -> Dict:
-        by_asset = defaultdict(list)
+    def by_hour(trades: List[Dict]) -> Dict[int, Dict]:
+        if not trades:
+            return {}
+        grouped = defaultdict(list)
         for t in trades:
-            by_asset[t.get('symbol', 'unknown')].append(t)
-        return {sym: Metrics.compute(trades) for sym, trades in by_asset.items()}
+            ts = t.get('timestamp')
+            if ts is not None and hasattr(ts, 'hour'):
+                grouped[ts.hour].append(t)
+        result = {}
+        for hour, group in grouped.items():
+            result[hour] = Metrics.compute(group)
+        return result
 
     @staticmethod
-    def by_hour(trades: List[Dict]) -> Dict:
-        by_hour = defaultdict(list)
+    def by_weekday(trades: List[Dict]) -> Dict[str, Dict]:
+        if not trades:
+            return {}
+        days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+        grouped = defaultdict(list)
         for t in trades:
-            hour = t.get('timestamp', pd.Timestamp.now()).hour
-            by_hour[hour].append(t)
-        return {h: Metrics.compute(trades) for h, trades in by_hour.items()}
+            ts = t.get('timestamp')
+            if ts is not None and hasattr(ts, 'weekday'):
+                grouped[days[ts.weekday()]].append(t)
+        result = {}
+        for day, group in grouped.items():
+            result[day] = Metrics.compute(group)
+        return result
 
     @staticmethod
-    def by_weekday(trades: List[Dict]) -> Dict:
-        by_weekday = defaultdict(list)
+    def by_regime(trades: List[Dict]) -> Dict[str, Dict]:
+        if not trades:
+            return {}
+        grouped = defaultdict(list)
         for t in trades:
-            wd = t.get('timestamp', pd.Timestamp.now()).weekday()
-            by_weekday[wd].append(t)
-        return {wd: Metrics.compute(trades) for wd, trades in by_weekday.items()}
-
-    @staticmethod
-    def by_regime(trades: List[Dict]) -> Dict:
-        by_regime = defaultdict(list)
-        for t in trades:
-            regime = t.get('regime', 'Normal')
-            by_regime[regime].append(t)
-        return {r: Metrics.compute(trades) for r, trades in by_regime.items()}
+            regime = t.get('regime', 'unknown')
+            grouped[regime].append(t)
+        result = {}
+        for regime, group in grouped.items():
+            result[regime] = Metrics.compute(group)
+        return result
