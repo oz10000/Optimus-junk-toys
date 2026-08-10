@@ -1,43 +1,58 @@
 # monte_carlo.py
 import numpy as np
+import pandas as pd
 from typing import List, Dict
 
 class MonteCarlo:
-    """Monte Carlo Simulation (1000 iteraciones) sobre los trades."""
-
     @staticmethod
-    def run(trades: List[Dict], n_simulations: int = 1000) -> Dict:
+    def run(trades: List[Dict], n_simulations: int = 1000,
+            initial_capital: float = 10000.0) -> Dict:
         if not trades:
-            return {'final_capital': [], 'drawdown': [], 'sharpe': []}
-
-        pnls = [t['pnl_pct'] for t in trades]
-        initial_capital = 10000.0
-
-        final_capitals = []
-        max_drawdowns = []
-        sharpes = []
-
-        for _ in range(n_simulations):
-            sampled = np.random.choice(pnls, size=len(pnls), replace=True)
-            equity = np.cumsum(sampled)
-            final_cap = initial_capital * (1 + equity[-1] / 100)
-            final_capitals.append(final_cap)
-
-            # Drawdown
-            peak = np.maximum.accumulate(equity)
-            dd = (peak - equity) / (peak + 1e-9)
-            max_drawdowns.append(dd.min())
-
-            # Sharpe
-            returns = pd.Series(equity).pct_change().dropna()
-            sharpes.append(returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0)
-
+            return MonteCarlo._empty_result()
+        returns = np.array([t.get('pnl_pct', 0.0) for t in trades])
+        if np.all(returns == 0.0):
+            returns = np.array([
+                (t.get('exit_price', 0) / t.get('entry_price', 1) - 1)
+                if t.get('entry_price', 0) > 0 else 0.0
+                for t in trades
+            ])
+        n = len(returns)
+        if n == 0:
+            return MonteCarlo._empty_result()
+        sim_returns = np.random.choice(returns, size=(n_simulations, n), replace=True)
+        equity_multipliers = np.cumprod(1 + sim_returns, axis=1)
+        final_capitals = initial_capital * equity_multipliers[:, -1]
+        peaks = np.maximum.accumulate(equity_multipliers, axis=1)
+        drawdowns = (peaks - equity_multipliers) / (peaks + 1e-9)
+        max_dd_per_sim = np.max(drawdowns, axis=1)
+        sim_means = np.mean(sim_returns, axis=1)
+        sim_stds = np.std(sim_returns, axis=1)
+        sharpe_sim = sim_means / (sim_stds + 1e-9) * np.sqrt(n)
+        min_equity = np.min(equity_multipliers, axis=1)
+        ruin_prob = np.mean(min_equity < 0.5)
         return {
             'mean_final_capital': np.mean(final_capitals),
-            'std_final_capital': np.std(final_capitals),
+            'median_final_capital': np.median(final_capitals),
             'percentile_5': np.percentile(final_capitals, 5),
             'percentile_95': np.percentile(final_capitals, 95),
-            'mean_max_dd': np.mean(max_drawdowns),
-            'mean_sharpe': np.mean(sharpes),
-            'ruin_prob': np.mean(np.array(final_capitals) < initial_capital * 0.5)
+            'mean_max_dd': np.mean(max_dd_per_sim),
+            'mean_sharpe': np.mean(sharpe_sim),
+            'ruin_prob': ruin_prob,
+            'all_final_capitals': final_capitals.tolist(),
+            'n_simulations': n_simulations,
+            'n_trades_used': n
+        }
+    @staticmethod
+    def _empty_result() -> Dict:
+        return {
+            'mean_final_capital': 0.0,
+            'median_final_capital': 0.0,
+            'percentile_5': 0.0,
+            'percentile_95': 0.0,
+            'mean_max_dd': 0.0,
+            'mean_sharpe': 0.0,
+            'ruin_prob': 0.0,
+            'all_final_capitals': [],
+            'n_simulations': 0,
+            'n_trades_used': 0
         }
