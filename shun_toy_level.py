@@ -3,49 +3,18 @@ import numpy as np
 from typing import Dict
 
 class ShunToyLevel:
-    """
-    Índice ShunToy Level (0-10).
-    Mide el coste esperado de ignorar una oportunidad.
-    """
-    
     @staticmethod
     def compute(edge_data: Dict, market_data: Dict, historical_data: Dict) -> Dict:
-        """
-        Calcula el ShunToy Level para una oportunidad.
-        
-        Args:
-            edge_data: Datos de Expected Edge
-            market_data: Datos de mercado (volatilidad, régimen, etc.)
-            historical_data: Datos históricos (win_rate, pf, etc.)
-        
-        Returns:
-            Dict con score (0-10), components y justificación
-        """
-        # 1. Expected Edge (0-1) → peso 25%
         edge_score = min(edge_data.get('expected_edge', 0) / 0.5, 1.0)
-        
-        # 2. Profit Factor (0-1) → peso 20%
         pf = historical_data.get('profit_factor', 1.0)
-        pf_score = min((pf - 1.0) / 1.0, 1.0)  # PF=1 → 0, PF=2 → 1
-        
-        # 3. Expectancy (0-1) → peso 15%
+        pf_score = min((pf - 1.0) / 1.0, 1.0)
         expectancy = historical_data.get('expectancy', 0)
-        exp_score = min(abs(expectancy) / 0.02, 1.0)  # 2% → 1
-        
-        # 4. Walk-Forward consistency (0-1) → peso 10%
+        exp_score = min(abs(expectancy) / 0.02, 1.0)
         wf_score = historical_data.get('walk_forward_consistency', 0.5)
-        
-        # 5. Monte Carlo stability (0-1) → peso 10%
         mc_score = historical_data.get('monte_carlo_stability', 0.5)
-        
-        # 6. Risk of Ruin (0-1, invertido) → peso 10%
         ruin = historical_data.get('risk_of_ruin', 1.0)
         ruin_score = 1 - min(ruin, 1.0)
-        
-        # 7. Consensus multi-timeframe (0-1) → peso 5%
         consensus_score = edge_data.get('confidence', 0.5)
-        
-        # 8. Régimen (0-1) → peso 5%
         regime = market_data.get('regime', 'Normal')
         regime_scores = {
             'Expansión': 1.0,
@@ -55,8 +24,6 @@ class ShunToyLevel:
             'Chop': 0.2
         }
         regime_score = regime_scores.get(regime, 0.5)
-        
-        # Pesos
         weights = {
             'expected_edge': 0.25,
             'profit_factor': 0.20,
@@ -67,8 +34,6 @@ class ShunToyLevel:
             'consensus': 0.05,
             'regime': 0.05
         }
-        
-        # Cálculo del score ponderado
         raw_score = (
             weights['expected_edge'] * edge_score +
             weights['profit_factor'] * pf_score +
@@ -79,11 +44,7 @@ class ShunToyLevel:
             weights['consensus'] * consensus_score +
             weights['regime'] * regime_score
         )
-        
-        # Escalar a 0-10
         final_score = raw_score * 10
-        
-        # Determinar nivel
         if final_score >= 8.0:
             level = 'Ω (Oportunidad excepcional)'
         elif final_score >= 6.0:
@@ -94,7 +55,6 @@ class ShunToyLevel:
             level = 'B (Baja prioridad)'
         else:
             level = 'E (Evitar)'
-        
         return {
             'score': round(final_score, 2),
             'level': level,
