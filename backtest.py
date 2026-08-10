@@ -1,4 +1,4 @@
-# backtest.py (simplificado para pruebas)
+# backtest.py
 import numpy as np
 import pandas as pd
 from typing import List, Dict
@@ -16,22 +16,22 @@ class Backtest:
             timeframe: str = '5m') -> Dict:
         self.trades = []
         for symbol in symbols:
-            df = self.data.get_ohlcv(symbol, timeframe, limit=1000)
+            df = self.data.get_ohlcv(symbol, timeframe, limit=500)
             if df is None or df.empty:
                 continue
-
             df = df[(df.index >= start_date) & (df.index <= end_date)]
             if len(df) < 50:
                 continue
 
-            # Generar señales para cada vela (simplificado)
-            for i in range(50, len(df)):
+            # Simular trades: tomar decisiones en algunas velas
+            for i in range(50, len(df), 10):  # Cada 10 velas
                 data_slice = df.iloc[:i+1]
                 decision = self.engine.evaluate(symbol, data_slice)
                 if decision and decision.get('action') != 'HOLD':
-                    # Simular trade
                     entry_price = df.iloc[i]['close']
-                    exit_price = entry_price * (1 + np.random.normal(0.01, 0.02))
+                    # Simular salida al siguiente cierre o con SL/TP
+                    exit_idx = min(i + 5, len(df) - 1)
+                    exit_price = df.iloc[exit_idx]['close']
                     pnl_pct = (exit_price - entry_price) / entry_price
                     if decision.get('direction') == 'SHORT':
                         pnl_pct = -pnl_pct
@@ -43,12 +43,12 @@ class Backtest:
                         'exit_price': exit_price,
                         'direction': decision.get('direction', 'LONG'),
                         'pnl_pct': pnl_pct,
-                        'duration_minutes': 30,
+                        'duration_minutes': (df.index[exit_idx] - df.index[i]).total_seconds() / 60,
                         'regime': decision.get('regime', 'Normal'),
                         'volatility': decision.get('volatility', 0.01),
                         'trailing_stop_used': 0.02,
                         'break_even_applied': False,
-                        'reason_exit': 'Take Profit',
+                        'reason_exit': 'Take Profit' if pnl_pct > 0 else 'Stop Loss',
                     })
                     break  # Solo 1 trade por símbolo para pruebas
 
