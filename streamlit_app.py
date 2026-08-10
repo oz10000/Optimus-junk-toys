@@ -10,12 +10,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
+import time
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO)
 # ============================================================
 st.set_page_config(
-    page_title="🧸 JUNK TOYS Ω",
+    page_title="🧸 JUNK TOYS Ω — Firm Signals & Rachas",
     page_icon="🧸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -47,7 +48,7 @@ except ImportError as e:
     st.stop()
 
 # ============================================================
-# DEFINIR PESTAÑAS (INMEDIATAMENTE PARA EVITAR NameError)
+# DEFINIR PESTAÑAS (INMEDIATAMENTE)
 # ============================================================
 tabs = st.tabs([
     "📊 Estado General",
@@ -89,7 +90,7 @@ def ensure_history():
     if len(st.session_state.history) >= 2:
         return
 
-    # Intentar cargar desde almacenamiento persistente
+    # Intentar cargar desde almacenamiento
     stored = st.session_state.storage.load('history')
     if stored and len(stored) >= 2:
         st.session_state.history = stored
@@ -99,7 +100,7 @@ def ensure_history():
     with st.spinner("🔄 Reconstruyendo historial mediante backtest..."):
         symbols = CONFIG.universe
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=CONFIG.backtest_days)
+        start_date = end_date - timedelta(days=CONFIG.BACKTEST_DAYS)
 
         data_provider = st.session_state.data
         engine = DecisionEngine(data_provider, None, [])
@@ -111,56 +112,15 @@ def ensure_history():
             if len(trades) >= 2:
                 st.session_state.history = trades
                 st.session_state.storage.save('history', trades)
-                st.success(f"✅ Historial reconstruido con {len(trades)} trades.")
+                st.success(f"✅ Historial reconstruido con {len(trades)} trades reales.")
             else:
-                # Crear historial de emergencia (2 trades ficticios)
-                now = datetime.now()
-                dummy_trades = [
-                    {
-                        'symbol': 'BTC/USDT',
-                        'timestamp': now - timedelta(hours=2),
-                        'entry_price': 30000,
-                        'exit_price': 30300,
-                        'direction': 'LONG',
-                        'pnl_pct': 0.01,
-                        'duration_minutes': 60,
-                        'regime': 'Tendencia',
-                        'volatility': 0.015,
-                        'trailing_stop_used': 0.02,
-                        'break_even_applied': False,
-                        'reason_exit': 'Take Profit',
-                    },
-                    {
-                        'symbol': 'ETH/USDT',
-                        'timestamp': now - timedelta(hours=1),
-                        'entry_price': 1800,
-                        'exit_price': 1818,
-                        'direction': 'LONG',
-                        'pnl_pct': 0.01,
-                        'duration_minutes': 45,
-                        'regime': 'Tendencia',
-                        'volatility': 0.02,
-                        'trailing_stop_used': 0.02,
-                        'break_even_applied': False,
-                        'reason_exit': 'Take Profit',
-                    }
-                ]
-                st.session_state.history = dummy_trades
-                st.session_state.storage.save('history', dummy_trades)
-                st.info("ℹ️ Historial de prueba generado (2 trades ficticios) para demostración.")
+                st.warning("⚠️ No se pudieron generar trades reales. El motor temporal usará datos disponibles.")
         except Exception as e:
             st.error(f"❌ Error en backtest automático: {str(e)}")
-            # Crear historial mínimo de emergencia
-            now = datetime.now()
-            st.session_state.history = [
-                {'symbol': 'BTC/USDT', 'timestamp': now - timedelta(hours=2), 'entry_price': 30000, 'exit_price': 30300, 'direction': 'LONG', 'pnl_pct': 0.01, 'duration_minutes': 60, 'regime': 'Tendencia', 'volatility': 0.015},
-                {'symbol': 'ETH/USDT', 'timestamp': now - timedelta(hours=1), 'entry_price': 1800, 'exit_price': 1818, 'direction': 'LONG', 'pnl_pct': 0.01, 'duration_minutes': 45, 'regime': 'Tendencia', 'volatility': 0.02},
-            ]
-            st.session_state.storage.save('history', st.session_state.history)
-            st.info("ℹ️ Historial mínimo creado para demostración.")
+            st.info("ℹ️ El motor temporal funcionará con el historial disponible, si existe.")
 
 def run_scan():
-    """Escanea el mercado y actualiza las señales (SIEMPRE genera señales)."""
+    """Escanea el mercado y actualiza las señales."""
     try:
         symbols = CONFIG.universe
         engine = DecisionEngine(st.session_state.data, None, st.session_state.history)
@@ -170,24 +130,23 @@ def run_scan():
             df = st.session_state.data.get_ohlcv(sym, '5m', 300)
             if df is not None and not df.empty:
                 dec = engine.evaluate(sym, df)
-                # SignalGenerator ahora SIEMPRE devuelve una señal (incluso NEUTRAL)
-                signal = SignalGenerator.generate(dec)
-                if signal is not None:
-                    signals.append(signal)
+                if dec is not None:
+                    signal = SignalGenerator.generate(dec)
+                    if signal is not None:
+                        signals.append(signal)
 
-        # Ordenar todas las señales por edge (incluyendo las NEUTRAL)
         st.session_state.signals = Ranking.rank(signals)
         st.session_state.last_scan = datetime.now()
 
         approved = sum(1 for s in st.session_state.signals if s.get('approved', False))
         total = len(st.session_state.signals)
-        st.success(f"✅ Escaneo completado. {total} oportunidades ({approved} aprobadas, {total - approved} desaprobadas).")
+        st.success(f"✅ Escaneo: {total} señales ({approved} aprobadas, {total - approved} desaprobadas)")
     except Exception as e:
         st.error(f"❌ Error en el escaneo: {str(e)}")
         st.session_state.signals = []
 
 # ============================================================
-# EJECUTAR ENSURE_HISTORY AL INICIO (SOLO UNA VEZ)
+# EJECUTAR ENSURE_HISTORY AL INICIO
 # ============================================================
 ensure_history()
 
@@ -198,6 +157,8 @@ with st.sidebar:
     st.image("https://img.icons8.com/emoji/96/000000/teddy-bear-emoji.png", width=80)
     st.header("🧸 JUNK TOYS Ω")
     st.caption(f"v{CONFIG.version}")
+    mode_text = "🔥 FIRM SIGNALS" if CONFIG.FIRM_MODE else "📊 Modo General"
+    st.caption(f"Modo: {mode_text}")
 
     history = st.session_state.history
     if history:
@@ -233,7 +194,7 @@ with tabs[0]:
         best = st.session_state.signals[0]
         col2.metric("Mejor Señal", f"{best.get('symbol', 'N/A')}")
         col3.metric("Dirección", best.get('direction', 'N/A'))
-        col4.metric("Expected Edge", f"{best.get('edge_pct', 0):.2f}%")
+        col4.metric("Expected Edge", f"{best.get('expected_edge', 0)*100:.2f}%")
     else:
         col2.metric("Mejor Señal", "Ninguna")
         col3.metric("Dirección", "--")
@@ -243,7 +204,7 @@ with tabs[0]:
         directions = [s.get('direction', 'NEUTRAL') for s in st.session_state.signals]
         df_dir = pd.DataFrame({'Dirección': directions})
         fig = px.pie(df_dir, names='Dirección', title="Distribución de Señales")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 # --- TAB 1: ÚLTIMO TRADE ---
 with tabs[1]:
@@ -286,7 +247,7 @@ with tabs[2]:
         probs = general.get('block_probabilities', {})
         if probs:
             df_probs = pd.DataFrame([probs])
-            st.dataframe(df_probs.style.format("{:.1%}"))
+            st.dataframe(df_probs.style.format("{:.1%}"), width='stretch')
 
         st.subheader("Rachas por Activo")
         if analyzer.by_asset:
@@ -298,7 +259,7 @@ with tabs[2]:
                     'Racha Ganancias': streaks.get('win_streaks', {}).get('current', 0),
                     'Racha Pérdidas': streaks.get('loss_streaks', {}).get('current', 0)
                 })
-            st.dataframe(pd.DataFrame(data))
+            st.dataframe(pd.DataFrame(data), width='stretch')
 
         st.subheader("¿El trade actual está favorecido por la racha histórica?")
         if st.session_state.history:
@@ -329,6 +290,7 @@ with tabs[3]:
 
         st.subheader("📉 Error Histórico de Predicción")
         st.metric("Error", f"{estimate.get('historical_error', 0)*100:.1f}%")
+        st.metric("Precisión", f"{estimate.get('precision', 0)*100:.1f}%")
 
         st.subheader("📊 Distribución de Intervalos")
         summary = dist.get_summary()
@@ -341,7 +303,7 @@ with tabs[3]:
         percentiles = summary.get('percentiles', {})
         if percentiles:
             df_pct = pd.DataFrame([percentiles])
-            st.dataframe(df_pct.style.format("{:.1f}"))
+            st.dataframe(df_pct.style.format("{:.1f}"), width='stretch')
 
         elapsed = estimate.get('elapsed', 0)
         mean_interval = estimate.get('avg_interval', 45)
@@ -363,7 +325,7 @@ with tabs[4]:
         for i, signal in enumerate(st.session_state.signals[:10], 1):
             approved = signal.get('approved', False)
             status = "✅ APROBADA" if approved else "⚠️ DESAPROBADA"
-            st.caption(f"#{i} {signal.get('symbol', 'N/A')} | {signal.get('direction', 'N/A')} | Edge: {signal.get('edge_pct', 0):.1f}% | {status}")
+            st.caption(f"#{i} {signal.get('symbol', 'N/A')} | {signal.get('direction', 'N/A')} | Edge: {signal.get('expected_edge', 0)*100:.1f}% | {status}")
 
         best = st.session_state.signals[0]
         approved = best.get('approved', False)
@@ -371,12 +333,27 @@ with tabs[4]:
         col1, col2, col3 = st.columns(3)
         col1.metric("Activo", best.get('symbol', 'N/A'))
         col2.metric("Dirección", best.get('direction', 'N/A'))
-        col3.metric("Expected Edge", f"{best.get('edge_pct', 0):.2f}%")
+        col3.metric("Expected Edge", f"{best.get('expected_edge', 0)*100:.2f}%")
 
         col1, col2 = st.columns(2)
         col1.metric("Estado", "✅ Aprobada" if approved else "⚠️ Desaprobada")
         col2.metric("Confianza", f"{best.get('confidence', 0)*100:.1f}%")
 
+        # Mostrar detalles de la señal
+        st.subheader("📋 Detalles de la Señal")
+        cols = st.columns(4)
+        cols[0].metric("Entry", f"${best.get('entry_price', 0):.2f}")
+        cols[1].metric("SL", f"${best.get('stop_loss', 0):.2f}")
+        cols[2].metric("TP", f"${best.get('take_profit', 0):.2f}")
+        cols[3].metric("Apalancamiento", f"{best.get('leverage_recommended', 1):.1f}x")
+
+        cols = st.columns(4)
+        cols[0].metric("BE Técnico", f"{best.get('break_even_technical', 0)*100:.1f}%")
+        cols[1].metric("BE Estadístico", f"{best.get('break_even_statistical', 0)*100:.1f}%")
+        cols[2].metric("Trailing Activ.", f"{best.get('trailing_stop', {}).get('activation', 0)*100:.1f}%")
+        cols[3].metric("Trailing Dist.", f"{best.get('trailing_stop', {}).get('distance', 0)*100:.1f}%")
+
+        # Tiempo
         if len(st.session_state.history) >= 2:
             timing = TimingEngine(st.session_state.history)
             estimate = timing.estimate_next_trade()
@@ -386,18 +363,18 @@ with tabs[4]:
 
         st.subheader("Justificación Estadística")
         st.caption(f"""
-        - **Win Rate Histórico**: {best.get('win_rate', 0)*100:.1f}%
-        - **Profit Factor**: {best.get('profit_factor', 0):.2f}
+        - **Win Rate Histórico**: {best.get('win_rate_expected', 0)*100:.1f}%
+        - **Profit Factor**: {best.get('profit_factor_expected', 0):.2f}
         - **Confianza**: {best.get('confidence', 0)*100:.1f}%
         - **Régimen**: {best.get('regime', 'N/A')}
-        - **Volatilidad**: {best.get('volatility', 0)*100:.2f}%
-        - **Clasificación**: {best.get('classification', 'N/A')} ({best.get('label', 'N/A')})
+        - **Consenso MTF**: {best.get('consensus_mtf', 0):.2f}
+        - **Clasificación**: {best.get('classification', 'N/A')}
         """)
 
         if approved:
             st.success("✅ **Oportunidad Aprobada**: Supera los umbrales de Edge (>10%) y Confianza (>40%)")
         else:
-            edge = best.get('edge', 0)
+            edge = best.get('expected_edge', 0)
             conf = best.get('confidence', 0)
             razones = []
             if edge <= 0.10:
@@ -423,13 +400,26 @@ with tabs[5]:
                 status_emoji = "✅" if approved else "⚠️"
                 status_text = "APROBADA" if approved else "DESAPROBADA"
                 st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
+
                 cols = st.columns(5)
                 cols[0].metric("Edge", f"{signal['expected_edge_pct']:.2f}%")
                 cols[1].metric("Score", f"{signal['score']:.1f}")
                 cols[2].metric("Confianza", f"{signal['confidence']*100:.1f}%")
                 cols[3].metric("PF Esperado", f"{signal['expected_profit_factor']:.2f}")
                 cols[4].metric("ShunToy", f"{signal['shun_toy_score']:.1f}/10")
-                st.caption(f"Régimen: {signal['regime']} | Volatilidad: {signal['volatility']*100:.2f}% | Clasificación: {signal['classification']} ({signal['label']})")
+
+                # Detalles completos
+                st.caption(f"""
+                **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
+                **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.1f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.1f}%
+                **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.1f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.1f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.1f}%
+                **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
+                **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
+                **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
+                **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
+                **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
+                """)
+
                 if approved:
                     st.caption("✅ **Aprobada**: Edge > 10% y Confianza > 40%")
                 else:
@@ -459,13 +449,25 @@ with tabs[6]:
                 status_emoji = "✅" if approved else "⚠️"
                 status_text = "APROBADA" if approved else "DESAPROBADA"
                 st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
+
                 cols = st.columns(5)
                 cols[0].metric("Edge", f"{signal['expected_edge_pct']:.2f}%")
                 cols[1].metric("Score", f"{signal['score']:.1f}")
                 cols[2].metric("Confianza", f"{signal['confidence']*100:.1f}%")
                 cols[3].metric("PF Esperado", f"{signal['expected_profit_factor']:.2f}")
                 cols[4].metric("ShunToy", f"{signal['shun_toy_score']:.1f}/10")
-                st.caption(f"Régimen: {signal['regime']} | Volatilidad: {signal['volatility']*100:.2f}% | Clasificación: {signal['classification']} ({signal['label']})")
+
+                st.caption(f"""
+                **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
+                **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.1f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.1f}%
+                **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.1f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.1f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.1f}%
+                **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
+                **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
+                **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
+                **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
+                **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
+                """)
+
                 if approved:
                     st.caption("✅ **Aprobada**: Edge > 10% y Confianza > 40%")
                 else:
@@ -488,8 +490,8 @@ with tabs[7]:
         edge_data = best.get('edge_data', {})
         market_data = {'regime': best.get('regime', 'Normal'), 'volatility': best.get('volatility', 0)}
         historical_data = {
-            'profit_factor': best.get('profit_factor', 1.0),
-            'expectancy': best.get('expected_pnl_per_trade', 0) / 100,
+            'profit_factor': best.get('profit_factor_expected', 1.0),
+            'expectancy': best.get('expectancy', 0),
             'risk_of_ruin': best.get('risk_of_ruin', 1.0),
             'walk_forward_consistency': 0.7,
             'monte_carlo_stability': 0.6
@@ -502,7 +504,7 @@ with tabs[7]:
         components = shun.get('components', {})
         df_comp = pd.DataFrame([components]).T
         df_comp.columns = ['Score']
-        st.dataframe(df_comp.style.format("{:.3f}"))
+        st.dataframe(df_comp.style.format("{:.3f}"), width='stretch')
         st.caption(shun.get('interpretation', ''))
     else:
         st.info("No hay oportunidades para evaluar.")
@@ -521,7 +523,7 @@ with tabs[8]:
         components = result.get('components', {})
         df_comp = pd.DataFrame([components]).T
         df_comp.columns = ['Score']
-        st.dataframe(df_comp.style.format("{:.3f}"))
+        st.dataframe(df_comp.style.format("{:.3f}"), width='stretch')
         st.subheader("Métricas")
         metrics = result.get('metrics', {})
         if metrics:
@@ -555,7 +557,7 @@ with tabs[9]:
                 'win_rate': '{:.1%}',
                 'profit_factor': '{:.2f}',
                 'total_return': '{:.2f}%'
-            }))
+            }), width='stretch')
     else:
         st.info("No hay historial de trades.")
 
@@ -599,7 +601,7 @@ with tabs[11]:
                 'win_rate': '{:.1%}',
                 'profit_factor': '{:.2f}',
                 'sharpe': '{:.2f}'
-            }))
+            }), width='stretch')
     else:
         st.info("Presiona 'Ejecutar Walk-Forward' para comenzar.")
 
@@ -646,7 +648,7 @@ with tabs[13]:
             yaxis_title='Return (%)',
             template='plotly_dark'
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No hay historial de trades.")
 
@@ -673,7 +675,7 @@ with tabs[14]:
             yaxis_title='Drawdown (%)',
             template='plotly_dark'
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.metric("Drawdown Máximo", f"{max(dd):.2f}%")
     else:
         st.info("No hay historial de trades.")
@@ -700,7 +702,7 @@ with tabs[15]:
         pnls = [t.get('pnl_pct', 0) for t in st.session_state.history]
         fig = px.histogram(pnls, nbins=20, title="Distribución de PnL")
         fig.update_layout(xaxis_title='PnL (%)', yaxis_title='Frecuencia')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No hay historial de trades.")
 
@@ -715,7 +717,7 @@ with tabs[16]:
             'pnl_pct': '{:.2%}',
             'entry_price': '${:.2f}',
             'exit_price': '${:.2f}'
-        }))
+        }), width='stretch')
         csv = df_history.to_csv(index=False)
         st.download_button(
             label="📥 Descargar CSV",
