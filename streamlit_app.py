@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
+from typing import List, Dict, Any
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO)
@@ -70,6 +71,74 @@ tabs = st.tabs([
 ])
 
 # ============================================================
+# FUNCIONES AUXILIARES DE SEGURIDAD
+# ============================================================
+def get_config_attr(name: str, default: Any = None) -> Any:
+    """Obtiene un atributo de CONFIG con fallback seguro."""
+    return getattr(CONFIG, name, default)
+
+def safe_format_timestamp(ts) -> str:
+    """Convierte timestamp a string seguro, sea datetime o string."""
+    if ts is None:
+        return "N/A"
+    if isinstance(ts, datetime):
+        return ts.strftime("%Y-%m-%d %H:%M")
+    if isinstance(ts, str):
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except:
+            return ts[:16] if len(ts) >= 16 else ts
+    return str(ts)
+
+def get_top_signals(signals: List[Dict], direction: str, n: int = 5) -> List[Dict]:
+    """Retorna las N mejores señales de una dirección específica (LONG/SHORT)."""
+    filtered = [s for s in signals if s.get('direction') == direction]
+    sorted_signals = sorted(filtered, key=lambda x: x.get('edge', 0), reverse=True)
+    return sorted_signals[:n]
+
+def create_dummy_signal(direction: str = 'LONG') -> Dict:
+    """Crea una señal dummy para rellenar el TOP N cuando no hay señales reales."""
+    return {
+        'symbol': '---',
+        'direction': direction,
+        'expected_edge_pct': 0,
+        'score': 0,
+        'confidence': 0,
+        'expected_profit_factor': 1.0,
+        'shun_toy_score': 0,
+        'approved': False,
+        'classification': 'Sin señal',
+        'regime': 'Normal',
+        'volatility': 0,
+        'entry_price': 0,
+        'stop_loss': 0,
+        'take_profit': 0,
+        'break_even_technical': 0,
+        'break_even_statistical': 0,
+        'trailing_stop': {'activation': 0, 'distance': 0, 'protected_gain': 0},
+        'leverage_recommended': 1,
+        'leverage_max': 1,
+        'time_since_last_trade': 0,
+        'time_to_next_trade_expected': 0,
+        'time_to_tp_expected': 0,
+        'entry_range': {'low': 0, 'high': 0},
+        'streak_status': {},
+        'temporal_confidence': 0,
+        'probability': 0,
+        'edge': 0,
+        'confidence': 0,
+        'consensus_mtf': 0,
+        'consensus_direction': 'NEUTRAL',
+        'win_rate_expected': 0,
+        'profit_factor_expected': 1.0,
+        'risk_of_ruin': 1.0,
+        'expectancy': 0,
+        'shun_toy_level': 0,
+        'min_protected_gain': 0,
+    }
+
+# ============================================================
 # INICIALIZACIÓN DE SESIÓN
 # ============================================================
 if 'initialized' not in st.session_state:
@@ -78,31 +147,11 @@ if 'initialized' not in st.session_state:
     st.session_state.history = []
     st.session_state.signals = []
     st.session_state.last_scan = None
-    st.session_state.backtest_done = False
     st.session_state.initialized = True
 
 # ============================================================
-# FUNCIONES AUXILIARES (CON FALLBACKS PARA CONFIG)
+# FUNCIONES PRINCIPALES
 # ============================================================
-def get_config_attr(name, default=None):
-    """Obtiene un atributo de CONFIG con fallback seguro."""
-    return getattr(CONFIG, name, default)
-
-def safe_format_timestamp(ts):
-    """Convierte timestamp a string seguro, sea datetime o string."""
-    if ts is None:
-        return "N/A"
-    if isinstance(ts, datetime):
-        return ts.strftime("%Y-%m-%d %H:%M")
-    if isinstance(ts, str):
-        # Intentar convertir a datetime
-        try:
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-            return dt.strftime("%Y-%m-%d %H:%M")
-        except:
-            return ts[:16] if len(ts) >= 16 else ts
-    return str(ts)
-
 def ensure_history():
     """Asegura que el historial tenga al menos 2 trades, ejecutando backtest si es necesario."""
     if len(st.session_state.history) >= 2:
@@ -203,11 +252,12 @@ with st.sidebar:
     st.caption(f"Oportunidades: {len(st.session_state.signals)}")
     st.caption(f"Último escaneo: {st.session_state.last_scan.strftime('%H:%M:%S') if st.session_state.last_scan else 'Nunca'}")
 
-    # Mostrar TOP 5 en sidebar
+    # Mostrar TOP 5 en sidebar (usando la función auxiliar)
     if st.session_state.signals:
         st.divider()
-        st.subheader("🏆 TOP 5")
-        for i, s in enumerate(st.session_state.signals[:5], 1):
+        st.subheader("🏆 TOP 5 GENERAL")
+        top5 = sorted(st.session_state.signals, key=lambda x: x.get('edge', 0), reverse=True)[:5]
+        for i, s in enumerate(top5, 1):
             approved = "✅" if s.get('approved', False) else "⚠️"
             st.caption(f"{i}. {s.get('symbol', 'N/A')} {s.get('direction', '')} {approved}")
 
@@ -231,7 +281,6 @@ with tabs[0]:
         col3.metric("Dirección", "--")
         col4.metric("Expected Edge", "--")
 
-    # Modo y activos
     st.caption(f"Modo: {'🔥 FIRM SIGNALS (94% Win Rate)' if get_config_attr('FIRM_MODE', False) else '📊 Modo General (86% Win Rate)'}")
     st.caption(f"Universo: {len(get_config_attr('universe', []))} activos monitorizados")
 
@@ -251,6 +300,7 @@ with tabs[0]:
 
     if st.session_state.signals:
         st.subheader("🏆 TOP 5 Oportunidades")
+        top5 = sorted(st.session_state.signals, key=lambda x: x.get('edge', 0), reverse=True)[:5]
         df_top = pd.DataFrame([{
             '#': i+1,
             'Activo': s.get('symbol', 'N/A'),
@@ -258,7 +308,7 @@ with tabs[0]:
             'Edge %': f"{s.get('expected_edge', 0)*100:.2f}%",
             'Aprobada': '✅' if s.get('approved', False) else '⚠️',
             'Clasificación': s.get('classification', 'N/A')
-        } for i, s in enumerate(st.session_state.signals[:5])])
+        } for i, s in enumerate(top5)])
         st.dataframe(df_top, width='stretch', hide_index=True)
 
 # --- TAB 1: ÚLTIMO TRADE ---
@@ -436,7 +486,8 @@ with tabs[4]:
     st.header("🚀 Próxima Oportunidad Estimada")
     if st.session_state.signals:
         st.subheader("📊 TOP 5 Oportunidades")
-        for i, signal in enumerate(st.session_state.signals[:5], 1):
+        top5 = sorted(st.session_state.signals, key=lambda x: x.get('edge', 0), reverse=True)[:5]
+        for i, signal in enumerate(top5, 1):
             approved = signal.get('approved', False)
             status = "✅ APROBADA" if approved else "⚠️ DESAPROBADA"
             prob = signal.get('probability', 0)
@@ -516,103 +567,111 @@ with tabs[4]:
 with tabs[5]:
     st.header("🏆 TOP 5 LONG")
     signals = st.session_state.signals if st.session_state.signals else []
-    top = TopOpportunities.compute(signals)
-    longs = top.get('top_long', [])
-    if longs:
-        approved_count = sum(1 for s in longs if s.get('approved', False))
-        st.caption(f"📊 {len(longs)} señales LONG mostradas ({approved_count} aprobadas, {len(longs) - approved_count} desaprobadas)")
-        for i, signal in enumerate(longs, 1):
-            with st.container():
-                approved = signal.get('approved', False)
-                status_emoji = "✅" if approved else "⚠️"
-                status_text = "APROBADA" if approved else "DESAPROBADA"
-                st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
 
-                cols = st.columns(5)
-                cols[0].metric("Edge", f"{signal['expected_edge_pct']:.2f}%")
-                cols[1].metric("Score", f"{signal['score']:.1f}")
-                cols[2].metric("Confianza", f"{signal['confidence']*100:.1f}%")
-                cols[3].metric("PF Esperado", f"{signal['expected_profit_factor']:.2f}")
-                cols[4].metric("ShunToy", f"{signal['shun_toy_score']:.1f}/10")
+    # Obtener TOP 5 LONG usando la función auxiliar
+    longs = get_top_signals(signals, 'LONG', 5)
 
-                st.caption(f"""
-                **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
-                **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.2f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.2f}%
-                **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.2f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.2f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.2f}%
-                **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
-                **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
-                **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
-                **Tiempo hasta TP estimado:** {signal.get('time_to_tp_expected', 0):.1f} min
-                **Rango entrada esperado:** {signal.get('entry_range', {}).get('low', 0):.2f} - {signal.get('entry_range', {}).get('high', 0):.2f}
-                **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
-                **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
-                **Probabilidad:** {signal.get('probability', 0)*100:.1f}%
-                """)
+    # Si no hay suficientes señales, rellenar con dummies
+    while len(longs) < 5:
+        longs.append(create_dummy_signal('LONG'))
 
-                if approved:
-                    st.caption("✅ **Aprobada**: Edge > umbral del activo y Confianza > 40%")
-                else:
-                    edge = signal.get('edge', 0)
-                    conf = signal.get('confidence', 0)
-                    razones = []
-                    if edge <= 0.10:
-                        razones.append(f"Edge ({edge*100:.1f}%) ≤ umbral")
-                    if conf <= 0.40:
-                        razones.append(f"Confianza ({conf*100:.1f}%) ≤ 40%")
-                    st.caption(f"⚠️ **Desaprobada**: {', '.join(razones) if razones else 'No supera umbrales'}")
-    else:
-        st.info("No hay señales LONG disponibles.")
+    approved_count = sum(1 for s in longs if s.get('approved', False))
+    st.caption(f"📊 {len(longs)} señales LONG mostradas ({approved_count} aprobadas, {len(longs) - approved_count} desaprobadas)")
+
+    for i, signal in enumerate(longs, 1):
+        with st.container():
+            approved = signal.get('approved', False)
+            status_emoji = "✅" if approved else "⚠️"
+            status_text = "APROBADA" if approved else "DESAPROBADA"
+            st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
+
+            cols = st.columns(5)
+            cols[0].metric("Edge", f"{signal.get('expected_edge_pct', 0):.2f}%")
+            cols[1].metric("Score", f"{signal.get('score', 0):.1f}")
+            cols[2].metric("Confianza", f"{signal.get('confidence', 0)*100:.1f}%")
+            cols[3].metric("PF Esperado", f"{signal.get('expected_profit_factor', 1.0):.2f}")
+            cols[4].metric("ShunToy", f"{signal.get('shun_toy_score', 0):.1f}/10")
+
+            st.caption(f"""
+            **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
+            **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.2f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.2f}%
+            **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.2f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.2f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.2f}%
+            **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
+            **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
+            **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
+            **Tiempo hasta TP estimado:** {signal.get('time_to_tp_expected', 0):.1f} min
+            **Rango entrada esperado:** {signal.get('entry_range', {}).get('low', 0):.2f} - {signal.get('entry_range', {}).get('high', 0):.2f}
+            **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
+            **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
+            **Probabilidad:** {signal.get('probability', 0)*100:.1f}%
+            """)
+
+            if approved:
+                st.caption("✅ **Aprobada**: Edge > umbral del activo y Confianza > 40%")
+            else:
+                edge = signal.get('edge', 0)
+                conf = signal.get('confidence', 0)
+                razones = []
+                if edge <= 0.10:
+                    razones.append(f"Edge ({edge*100:.1f}%) ≤ umbral")
+                if conf <= 0.40:
+                    razones.append(f"Confianza ({conf*100:.1f}%) ≤ 40%")
+                st.caption(f"⚠️ **Desaprobada**: {', '.join(razones) if razones else 'No supera umbrales'}")
 
 # --- TAB 6: TOP 5 SHORT ---
 with tabs[6]:
     st.header("⬇️ TOP 5 SHORT")
     signals = st.session_state.signals if st.session_state.signals else []
-    top = TopOpportunities.compute(signals)
-    shorts = top.get('top_short', [])
-    if shorts:
-        approved_count = sum(1 for s in shorts if s.get('approved', False))
-        st.caption(f"📊 {len(shorts)} señales SHORT mostradas ({approved_count} aprobadas, {len(shorts) - approved_count} desaprobadas)")
-        for i, signal in enumerate(shorts, 1):
-            with st.container():
-                approved = signal.get('approved', False)
-                status_emoji = "✅" if approved else "⚠️"
-                status_text = "APROBADA" if approved else "DESAPROBADA"
-                st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
 
-                cols = st.columns(5)
-                cols[0].metric("Edge", f"{signal['expected_edge_pct']:.2f}%")
-                cols[1].metric("Score", f"{signal['score']:.1f}")
-                cols[2].metric("Confianza", f"{signal['confidence']*100:.1f}%")
-                cols[3].metric("PF Esperado", f"{signal['expected_profit_factor']:.2f}")
-                cols[4].metric("ShunToy", f"{signal['shun_toy_score']:.1f}/10")
+    # Obtener TOP 5 SHORT usando la función auxiliar
+    shorts = get_top_signals(signals, 'SHORT', 5)
 
-                st.caption(f"""
-                **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
-                **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.2f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.2f}%
-                **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.2f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.2f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.2f}%
-                **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
-                **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
-                **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
-                **Tiempo hasta TP estimado:** {signal.get('time_to_tp_expected', 0):.1f} min
-                **Rango entrada esperado:** {signal.get('entry_range', {}).get('low', 0):.2f} - {signal.get('entry_range', {}).get('high', 0):.2f}
-                **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
-                **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
-                **Probabilidad:** {signal.get('probability', 0)*100:.1f}%
-                """)
+    # Si no hay suficientes señales, rellenar con dummies
+    while len(shorts) < 5:
+        shorts.append(create_dummy_signal('SHORT'))
 
-                if approved:
-                    st.caption("✅ **Aprobada**: Edge > umbral del activo y Confianza > 40%")
-                else:
-                    edge = signal.get('edge', 0)
-                    conf = signal.get('confidence', 0)
-                    razones = []
-                    if edge <= 0.10:
-                        razones.append(f"Edge ({edge*100:.1f}%) ≤ umbral")
-                    if conf <= 0.40:
-                        razones.append(f"Confianza ({conf*100:.1f}%) ≤ 40%")
-                    st.caption(f"⚠️ **Desaprobada**: {', '.join(razones) if razones else 'No supera umbrales'}")
-    else:
-        st.info("No hay señales SHORT disponibles.")
+    approved_count = sum(1 for s in shorts if s.get('approved', False))
+    st.caption(f"📊 {len(shorts)} señales SHORT mostradas ({approved_count} aprobadas, {len(shorts) - approved_count} desaprobadas)")
+
+    for i, signal in enumerate(shorts, 1):
+        with st.container():
+            approved = signal.get('approved', False)
+            status_emoji = "✅" if approved else "⚠️"
+            status_text = "APROBADA" if approved else "DESAPROBADA"
+            st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
+
+            cols = st.columns(5)
+            cols[0].metric("Edge", f"{signal.get('expected_edge_pct', 0):.2f}%")
+            cols[1].metric("Score", f"{signal.get('score', 0):.1f}")
+            cols[2].metric("Confianza", f"{signal.get('confidence', 0)*100:.1f}%")
+            cols[3].metric("PF Esperado", f"{signal.get('expected_profit_factor', 1.0):.2f}")
+            cols[4].metric("ShunToy", f"{signal.get('shun_toy_score', 0):.1f}/10")
+
+            st.caption(f"""
+            **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
+            **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.2f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.2f}%
+            **Trailing:** Activación {signal.get('trailing_stop', {}).get('activation', 0)*100:.2f}% | Distancia {signal.get('trailing_stop', {}).get('distance', 0)*100:.2f}% | Ganancia protegida {signal.get('trailing_stop', {}).get('protected_gain', 0)*100:.2f}%
+            **Apalancamiento:** {signal.get('leverage_recommended', 1):.1f}x (máx {signal.get('leverage_max', 1):.1f}x)
+            **Régimen:** {signal.get('regime', 'Normal')} | **Consenso MTF:** {signal.get('consensus_mtf', 0):.2f}
+            **Tiempo desde último trade:** {signal.get('time_since_last_trade', 0):.0f} min | **Próximo trade estimado:** {signal.get('time_to_next_trade_expected', 0):.0f} min
+            **Tiempo hasta TP estimado:** {signal.get('time_to_tp_expected', 0):.1f} min
+            **Rango entrada esperado:** {signal.get('entry_range', {}).get('low', 0):.2f} - {signal.get('entry_range', {}).get('high', 0):.2f}
+            **Racha:** {signal.get('streak_status', {}).get('explanation', 'Sin datos')}
+            **Confianza Temporal:** {signal.get('temporal_confidence', 0)*100:.1f}%
+            **Probabilidad:** {signal.get('probability', 0)*100:.1f}%
+            """)
+
+            if approved:
+                st.caption("✅ **Aprobada**: Edge > umbral del activo y Confianza > 40%")
+            else:
+                edge = signal.get('edge', 0)
+                conf = signal.get('confidence', 0)
+                razones = []
+                if edge <= 0.10:
+                    razones.append(f"Edge ({edge*100:.1f}%) ≤ umbral")
+                if conf <= 0.40:
+                    razones.append(f"Confianza ({conf*100:.1f}%) ≤ 40%")
+                st.caption(f"⚠️ **Desaprobada**: {', '.join(razones) if razones else 'No supera umbrales'}")
 
 # --- TAB 7: SHUNTOY LEVEL ---
 with tabs[7]:
@@ -973,7 +1032,6 @@ with tabs[16]:
         cols_to_show = ['symbol', 'direction', 'entry_price', 'exit_price', 'pnl_pct', 'duration_minutes', 'regime', 'reason_exit', 'timestamp']
         available_cols = [c for c in cols_to_show if c in df_history.columns]
 
-        # Convertir timestamps a string para mostrar
         if 'timestamp' in df_history.columns:
             df_history['timestamp'] = df_history['timestamp'].apply(safe_format_timestamp)
 
