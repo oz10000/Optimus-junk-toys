@@ -10,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
-import time
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO)
@@ -87,11 +86,10 @@ if 'initialized' not in st.session_state:
 # ============================================================
 def ensure_history():
     """Asegura que el historial tenga al menos 2 trades."""
-    history = st.session_state.history
-    if len(history) >= 2:
+    if len(st.session_state.history) >= 2:
         return
 
-    # Intentar cargar desde almacenamiento
+    # Intentar cargar desde almacenamiento persistente
     stored = st.session_state.storage.load('history')
     if stored and len(stored) >= 2:
         st.session_state.history = stored
@@ -223,7 +221,7 @@ with st.sidebar:
     st.caption(f"Último escaneo: {st.session_state.last_scan.strftime('%H:%M:%S') if st.session_state.last_scan else 'Nunca'}")
 
 # ============================================================
-# CONTENIDO DE LAS PESTAÑAS
+# CONTENIDO DE PESTAÑAS
 # ============================================================
 
 # --- TAB 0: ESTADO GENERAL ---
@@ -413,7 +411,6 @@ with tabs[4]:
 # --- TAB 5: TOP 3 LONG ---
 with tabs[5]:
     st.header("🏆 TOP 3 LONG")
-    # Asegurar que siempre haya al menos 3 señales para mostrar
     signals = st.session_state.signals if st.session_state.signals else []
     top = TopOpportunities.compute(signals)
     longs = top.get('top_long', [])
@@ -643,7 +640,12 @@ with tabs[13]:
             name='Equity Curve',
             line=dict(color='green', width=2)
         ))
-        fig.update_layout(title='Curva de Capital', xaxis_title='Trade #', yaxis_title='Return (%)', template='plotly_dark')
+        fig.update_layout(
+            title='Curva de Capital',
+            xaxis_title='Trade #',
+            yaxis_title='Return (%)',
+            template='plotly_dark'
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No hay historial de trades.")
@@ -665,7 +667,12 @@ with tabs[14]:
             fill='tozeroy',
             line=dict(color='red', width=2)
         ))
-        fig.update_layout(title='Drawdown', xaxis_title='Trade #', yaxis_title='Drawdown (%)', template='plotly_dark')
+        fig.update_layout(
+            title='Drawdown',
+            xaxis_title='Trade #',
+            yaxis_title='Drawdown (%)',
+            template='plotly_dark'
+        )
         st.plotly_chart(fig, use_container_width=True)
         st.metric("Drawdown Máximo", f"{max(dd):.2f}%")
     else:
