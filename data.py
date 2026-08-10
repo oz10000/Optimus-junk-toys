@@ -1,79 +1,64 @@
 # data.py
-import ccxt
-import pandas as pd
-import numpy as np
-import pickle
-import hashlib
 import os
-from typing import Optional, Dict, List
+import pandas as pd
+import ccxt
+from typing import Optional
 from config import CONFIG
 
 class DataProvider:
-    """Proveedor de datos OHLCV con caché y checksum."""
+    """
+    Proveedor de datos de mercado usando CCXT (Binance).
+    Utiliza caché para evitar descargas repetidas.
+    """
 
     def __init__(self, exchange_id: str = 'binance'):
         self.exchange = getattr(ccxt, exchange_id)({
             'enableRateLimit': True,
             'options': {'defaultType': 'spot'}
         })
+        # Asegurar que el directorio de caché existe
         self.cache_dir = CONFIG.cache_dir
-        os.makedirs(self.cache_dir, exist_ok=True)
-        self._memory_cache: Dict[str, pd.DataFrame] = {}
+        if not os.path.exists(self.cache_dir):
+            os.makedirs(self.cache_dir, exist_ok=True)
 
-    def get_ohlcv(self, symbol: str, timeframe: str = None, limit: int = 300,
-                  force_refresh: bool = False) -> Optional[pd.DataFrame]:
-        """Obtiene velas OHLCV con caché."""
-        timeframe = timeframe or CONFIG.timeframe
-        cache_key = hashlib.md5(f"{symbol}_{timeframe}_{limit}".encode()).hexdigest()
-        cache_path = os.path.join(self.cache_dir, f"{cache_key}.pkl")
-        meta_path = os.path.join(self.cache_dir, f"{cache_key}.meta")
+    def get_ohlcv(self, symbol: str, timeframe: str = '5m', limit: int = 1000,
+                  use_cache: bool = True) -> Optional[pd.DataFrame]:
+        """
+        Descarga velas OHLCV desde Binance, con caché opcional.
+        Retorna un DataFrame con índice datetime.
+        """
+        # Construir nombre de archivo de caché
+        cache_file = os.path.join(
+            self.cache_dir,
+            f"{symbol.replace('/', '_')}_{timeframe}_{limit}.parquet"
+        )
 
-        if not force_refresh and cache_key in self._memory_cache:
-            return self._memory_cache[cache_key]
-
-        if not force_refresh and os.path.exists(cache_path) and os.path.exists(meta_path):
+        # Intentar cargar desde caché
+        if use_cache and os.path.exists(cache_file):
             try:
-                with open(meta_path, 'r') as f:
-                    stored_hash = f.read().strip()
-                with open(cache_path, 'rb') as f:
-                    df = pickle.load(f)
-                current_hash = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
-                if current_hash == stored_hash:
-                    self._memory_cache[cache_key] = df
+                df = pd.read_parquet(cache_file)
+                # Verificar que los datos no estén obsoletos (última vela de hoy)
+                last_time = df.index[-1]
+                if (pd.Timestamp.now() - last_time).total_seconds() < 3600:  # 1 hora
                     return df
-            except:
-                pass
+            except Exception:
+                pass  # Si falla la carga, descargar de nuevo
 
+        # Descargar desde el exchange
         try:
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            if not ohlcv:
-                return None
-            df = pd.DataFrame(ohlcv, columns=['timestamp','open','high','low','close','volume'])
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
-            df = df.astype(float)
 
-            checksum = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
-            with open(cache_path, 'wb') as f:
-                pickle.dump(df, f)
-            with open(meta_path, 'w') as f:
-                f.write(checksum)
+            # Guardar en caché
+            if use_cache:
+                try:
+                    df.to_parquet(cache_file)
+                except Exception:
+                    pass  # Si falla el guardado, continuar sin caché
 
-            self._memory_cache[cache_key] = df
             return df
-
         except Exception as e:
-            print(f"Error fetching {symbol}: {e}")
+            print(f"❌ Error fetching {symbol} {timeframe}: {e}")
             return None
-
-    def get_multi_timeframe(self, symbol: str, timeframes: List[str] = None) -> Dict[str, pd.DataFrame]:
-        """Obtiene velas para múltiples timeframes."""
-        if timeframes is None:
-            timeframes = list(CONFIG.mtf_weights.keys())
-        result = {}
-        for tf in timeframes:
-            if CONFIG.mtf_weights.get(tf, 0) > 0:
-                df = self.get_ohlcv(symbol, timeframe=tf, limit=100)
-                if df is not None:
-                    result[tf] = df
-        return result
