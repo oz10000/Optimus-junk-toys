@@ -1,4 +1,4 @@
-# backtest.py - VERSIÓN COMPLETA SIN TRADES FICTICIOS
+# backtest.py - VERSIÓN CORREGIDA (timestamps como datetime)
 import numpy as np
 import pandas as pd
 from typing import List, Dict
@@ -29,9 +29,8 @@ class Backtest:
 
             position = None
 
-            # Evaluar CADA vela
             for i in range(50, len(df)):
-                current_time = df.index[i]
+                current_time = df.index[i]  # pandas Timestamp → datetime
                 current_price = df.iloc[i]['close']
                 data_slice = df.iloc[:i+1]
 
@@ -47,7 +46,7 @@ class Backtest:
                             'symbol': symbol,
                             'direction': direction,
                             'entry_price': entry_price,
-                            'entry_time': current_time,
+                            'entry_time': current_time.to_pydatetime() if hasattr(current_time, 'to_pydatetime') else current_time,
                             'sl_pct': sl_pct,
                             'tp_pct': tp_pct,
                             'regime': decision.get('regime', 'Normal'),
@@ -76,7 +75,7 @@ class Backtest:
                             if not position['be_applied'] and current_price > position['entry_price'] * (1 + position['be_trigger']):
                                 position['sl_price'] = position['entry_price']
                                 position['be_applied'] = True
-                    else:  # SHORT
+                    else:
                         if current_price < position['lowest']:
                             position['lowest'] = current_price
                             if not position['trailing_active'] and current_price < position['entry_price'] * (1 - position['trailing_activation']):
@@ -89,7 +88,6 @@ class Backtest:
                                 position['sl_price'] = position['entry_price']
                                 position['be_applied'] = True
 
-                    # Verificar salida
                     exit_price = None
                     exit_reason = None
                     if position['direction'] == 'LONG':
@@ -116,7 +114,7 @@ class Backtest:
 
                         self.trades.append({
                             'symbol': position['symbol'],
-                            'timestamp': position['entry_time'],
+                            'timestamp': position['entry_time'],  # datetime
                             'entry_price': position['entry_price'],
                             'exit_price': exit_price,
                             'direction': position['direction'],
@@ -130,7 +128,6 @@ class Backtest:
                         })
                         position = None
 
-        # NO crear trades ficticios
         return {
             'trades': self.trades,
             'n_trades': len(self.trades),
