@@ -16,17 +16,17 @@ class TopOpportunities:
         all_signals = longs_enriched + shorts_enriched + neutrals_enriched
         all_sorted = sorted(all_signals, key=lambda x: x.get('edge', 0), reverse=True)
 
-        # Si no hay señales, crear 3 dummy para cada dirección
+        # ===== TOP 5 (cambiado de 3 a 5) =====
         if not all_sorted:
-            longs = [TopOpportunities._dummy_signal('LONG') for _ in range(3)]
-            shorts = [TopOpportunities._dummy_signal('SHORT') for _ in range(3)]
+            longs = [TopOpportunities._dummy_signal('LONG') for _ in range(5)]
+            shorts = [TopOpportunities._dummy_signal('SHORT') for _ in range(5)]
         else:
-            longs = [s for s in all_sorted if s.get('direction') == 'LONG'][:3]
-            shorts = [s for s in all_sorted if s.get('direction') == 'SHORT'][:3]
+            longs = [s for s in all_sorted if s.get('direction') == 'LONG'][:5]
+            shorts = [s for s in all_sorted if s.get('direction') == 'SHORT'][:5]
             # Rellenar con neutros si faltan
-            while len(longs) < 3:
+            while len(longs) < 5:
                 longs.append(TopOpportunities._dummy_signal('LONG'))
-            while len(shorts) < 3:
+            while len(shorts) < 5:
                 shorts.append(TopOpportunities._dummy_signal('SHORT'))
 
         return {
