@@ -1,42 +1,48 @@
 # consensus.py
-from typing import Dict
 import numpy as np
-from config import CONFIG
-from pidelta import PiDeltaScore
+import pandas as pd
 
-class MultiTimeframeConsensus:
-    """Consenso ponderado de múltiples timeframes."""
+class Consensus:
+    """
+    Consenso multi-timeframe.
+    Evalúa la tendencia en múltiples plazos y genera un score.
+    """
 
-    def __init__(self, data_provider):
-        self.data = data_provider
+    @staticmethod
+    def compute(df: pd.DataFrame) -> float:
+        """
+        Retorna un score de consenso entre -1 y 1.
+        """
+        if df is None or len(df) < 100:
+            return 0.0
 
-    def compute(self, symbol: str) -> Dict:
-        weights = CONFIG.mtf_weights
-        contributions = {}
-        weighted_sum = 0.0
-        total_weight = 0.0
+        close = df['close']
 
-        for tf, weight in weights.items():
-            if weight == 0:
-                continue
-            df = self.data.get_ohlcv(symbol, timeframe=tf, limit=100)
-            if df is None or df.empty:
-                continue
-            score = PiDeltaScore.compute(df)
-            signal = 1 if score > CONFIG.min_score else -1 if score < -CONFIG.min_score else 0
-            contributions[tf] = {'score': score, 'signal': signal, 'weight': weight}
-            weighted_sum += weight * signal
-            total_weight += weight
+        # Calcular pendientes en diferentes plazos (simulado)
+        # Usamos ventanas de diferentes tamaños como aproximación a múltiples timeframes
+        def slope(series, window):
+            if len(series) < window:
+                return 0.0
+            x = np.arange(window)
+            y = series.iloc[-window:].values
+            if np.std(x) == 0:
+                return 0.0
+            return np.polyfit(x, y, 1)[0]
 
-        if total_weight == 0:
-            return {'direction': 'NEUTRAL', 'confidence': 0.0, 'score': 0.0, 'contributions': {}}
-
-        consensus_score = weighted_sum / total_weight
-        direction = 'LONG' if consensus_score > 0.3 else 'SHORT' if consensus_score < -0.3 else 'NEUTRAL'
-
-        return {
-            'direction': direction,
-            'confidence': abs(consensus_score),
-            'score': consensus_score,
-            'contributions': contributions
+        slopes = {
+            'short': slope(close, 12),   # ~1 hora en 5m
+            'medium': slope(close, 24),  # ~2 horas
+            'long': slope(close, 48),    # ~4 horas
         }
+
+        # Normalizar pendientes a [-1, 1] usando volatilidad
+        vol = close.pct_change().std()
+        if vol == 0:
+            vol = 0.01
+        normalized = {k: np.clip(v / (vol * 100), -1, 1) for k, v in slopes.items()}
+
+        # Ponderación: más peso a plazos más largos
+        weights = {'short': 0.2, 'medium': 0.3, 'long': 0.5}
+        consensus = sum(normalized[k] * weights[k] for k in weights)
+
+        return np.clip(consensus, -1, 1)
