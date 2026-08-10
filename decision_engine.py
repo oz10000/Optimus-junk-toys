@@ -1,4 +1,4 @@
-# decision_engine.py - VERSIÓN CON SCORING ADAPTATIVO E INTEGRACIÓN DE RACHAS
+# decision_engine.py - VERSIÓN CORREGIDA
 import numpy as np
 import pandas as pd
 from typing import Dict
@@ -7,12 +7,9 @@ from datetime import datetime
 from indicators import Indicators
 from consensus import Consensus
 from expected_edge import ExpectedEdge
-from leverage_engine import LeverageEngine
-from risk_manager import RiskManager
 from market_regime import MarketRegime
 from config import CONFIG
 from timing_engine import TimingEngine
-from streak_analyzer import StreakAnalyzer
 
 
 class DecisionEngine:
@@ -22,7 +19,6 @@ class DecisionEngine:
         self.history = history or []
         self.regime_detector = MarketRegime()
         self.timing = TimingEngine(self.history) if len(self.history) >= 2 else None
-        self.streak_analyzer = StreakAnalyzer(self.history) if len(self.history) >= 2 else None
 
     def evaluate(self, symbol: str, df: pd.DataFrame) -> Dict:
         if df is None or len(df) < 50:
@@ -45,16 +41,19 @@ class DecisionEngine:
 
             consensus_score = Consensus.compute(df)
 
-            # ===== UMBRALES ADAPTATIVOS POR ACTIVO =====
-            thresholds = CONFIG.get_thresholds(symbol)
-            edge_threshold = thresholds['edge']
-            pidelta_threshold = thresholds['pidelta']
-            confidence_threshold = thresholds['confidence']
-            consensus_threshold = thresholds.get('consensus', 0.25)
+            # ===== UMBRALES FIRM MODE =====
+            if CONFIG.FIRM_MODE:
+                if regime not in CONFIG.FIRM_REGIMES:
+                    return None
+                if abs(pidelta) < CONFIG.FIRM_PIDELTA_THRESHOLD:
+                    return None
+                if abs(consensus_score) < CONFIG.FIRM_CONSENSUS_THRESHOLD:
+                    return None
 
             # ===== EXPECTED EDGE =====
             win_rate = self.stats.get('win_rate', 0.94 if CONFIG.FIRM_MODE else 0.86)
             pf = self.stats.get('profit_factor', 2.45 if CONFIG.FIRM_MODE else 1.58)
+
             edge_data = ExpectedEdge.compute(
                 score=pidelta,
                 adx=adx,
@@ -63,36 +62,16 @@ class DecisionEngine:
                 regime=regime,
                 win_rate=win_rate,
                 pf=pf,
-                tp_pct=thresholds['tp_pct'],
-                sl_pct=thresholds['sl_pct']
+                tp_pct=CONFIG.get_tp_pct(symbol),
+                sl_pct=CONFIG.get_sl_pct(symbol)
             )
 
             edge = edge_data.get('expected_edge', 0.0)
 
-            # ===== FILTROS ULTRA-ESTRICTOS (FIRM MODE) =====
-            if CONFIG.FIRM_MODE:
-                if regime not in CONFIG.FIRM_REGIMES:
-                    return None
-                if edge < edge_threshold:
-                    return None
-                if abs(pidelta) < pidelta_threshold:
-                    return None
-                if abs(consensus_score) < consensus_threshold:
-                    return None
-                confidence = abs(pidelta) * 0.5 + 0.5
-                if confidence < confidence_threshold:
-                    return None
-
-            # ===== AJUSTE POR RACHAS =====
-            size_mult = 1.0
-            if self.streak_analyzer is not None:
-                general = self.streak_analyzer.general
-                if general.get('win_streaks', {}).get('current', 0) >= 3:
-                    size_mult = 0.9
-                if general.get('loss_streaks', {}).get('current', 0) >= 2:
-                    size_mult = 0.8
-
             # ===== DECISIÓN =====
+            edge_threshold = CONFIG.FIRM_EDGE_THRESHOLD if CONFIG.FIRM_MODE else CONFIG.EDGE_THRESHOLD
+            pidelta_threshold = CONFIG.FIRM_PIDELTA_THRESHOLD if CONFIG.FIRM_MODE else CONFIG.PIDELTA_THRESHOLD
+
             if pidelta > pidelta_threshold and edge > edge_threshold:
                 action = 'BUY'
                 direction = 'LONG'
@@ -102,9 +81,9 @@ class DecisionEngine:
             else:
                 return None
 
-            # ===== PARÁMETROS OPTIMIZADOS POR ACTIVO =====
-            sl_price = last_price * (1 - thresholds['sl_pct']) if direction == 'LONG' else last_price * (1 + thresholds['sl_pct'])
-            tp_price = last_price * (1 + thresholds['tp_pct']) if direction == 'LONG' else last_price * (1 - thresholds['tp_pct'])
+            # ===== PARÁMETROS OPTIMIZADOS =====
+            sl_price = last_price * (1 - CONFIG.get_sl_pct(symbol)) if direction == 'LONG' else last_price * (1 + CONFIG.get_sl_pct(symbol))
+            tp_price = last_price * (1 + CONFIG.get_tp_pct(symbol)) if direction == 'LONG' else last_price * (1 - CONFIG.get_tp_pct(symbol))
 
             time_since_last = 0
             next_trade_est = {'remaining_minutes': 0, 'confidence': 0}
@@ -124,8 +103,8 @@ class DecisionEngine:
                 'entry_price': last_price,
                 'sl_price': sl_price,
                 'tp_price': tp_price,
-                'sl_pct': thresholds['sl_pct'],
-                'tp_pct': thresholds['tp_pct'],
+                'sl_pct': CONFIG.get_sl_pct(symbol),
+                'tp_pct': CONFIG.get_tp_pct(symbol),
                 'score': pidelta,
                 'adx': adx,
                 'ker': ker,
@@ -145,17 +124,15 @@ class DecisionEngine:
                 'risk_of_ruin': edge_data.get('risk_of_ruin', 1.0),
                 'expected_pnl_per_trade': edge_data.get('expected_pnl_per_trade', 0),
                 'expected_pnl_daily': edge_data.get('expected_pnl_daily', 0),
-                'leverage_recommended': thresholds['leverage'],
-                'leverage_max': thresholds['leverage_max'],
+                'leverage_recommended': CONFIG.get_leverage_rec(symbol),
+                'leverage_max': CONFIG.get_leverage_max(symbol),
                 'consensus_direction': 'BULL' if consensus_score > 0.2 else 'BEAR' if consensus_score < -0.2 else 'NEUTRAL',
                 'time_since_last_trade': time_since_last,
                 'next_trade_est': next_trade_est,
-                'be_trigger': thresholds['be_trigger'],
-                'be_statistical': thresholds['be_statistical'],
-                'trailing_activation': thresholds['trailing_activation'],
-                'trailing_distance': thresholds['trailing_distance'],
-                'size_mult': size_mult,
-                'streak_status': self.streak_analyzer.general if self.streak_analyzer else None,
+                'be_trigger': CONFIG.get_be_trigger(symbol),
+                'be_statistical': CONFIG.BE_STATISTICAL_DEFAULT,
+                'trailing_activation': CONFIG.get_trailing_activation(symbol),
+                'trailing_distance': CONFIG.get_trailing_distance(symbol),
                 'avg_duration_used': edge_data.get('avg_duration_used', 1.5),
                 'trades_per_day_used': edge_data.get('trades_per_day_used', 1.2)
             }
@@ -202,8 +179,6 @@ class DecisionEngine:
             'be_statistical': 0,
             'trailing_activation': 0,
             'trailing_distance': 0,
-            'size_mult': 1.0,
-            'streak_status': None,
             'avg_duration_used': 0,
             'trades_per_day_used': 0
         }
