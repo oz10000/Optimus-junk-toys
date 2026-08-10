@@ -10,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
-import time
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO)
@@ -23,7 +22,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# IMPORTACIONES
+# IMPORTACIONES CON MANEJO DE ERRORES
 # ============================================================
 try:
     from config import CONFIG
@@ -83,8 +82,27 @@ if 'initialized' not in st.session_state:
     st.session_state.initialized = True
 
 # ============================================================
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES (CON FALLBACKS PARA CONFIG)
 # ============================================================
+def get_config_attr(name, default=None):
+    """Obtiene un atributo de CONFIG con fallback seguro."""
+    return getattr(CONFIG, name, default)
+
+def safe_format_timestamp(ts):
+    """Convierte timestamp a string seguro, sea datetime o string."""
+    if ts is None:
+        return "N/A"
+    if isinstance(ts, datetime):
+        return ts.strftime("%Y-%m-%d %H:%M")
+    if isinstance(ts, str):
+        # Intentar convertir a datetime
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except:
+            return ts[:16] if len(ts) >= 16 else ts
+    return str(ts)
+
 def ensure_history():
     """Asegura que el historial tenga al menos 2 trades, ejecutando backtest si es necesario."""
     if len(st.session_state.history) >= 2:
@@ -96,9 +114,10 @@ def ensure_history():
         return
 
     with st.spinner("🔄 Reconstruyendo historial mediante backtest..."):
-        symbols = CONFIG.universe
+        symbols = get_config_attr('universe', ['BTC/USDT', 'ETH/USDT'])
+        backtest_days = get_config_attr('BACKTEST_DAYS', 90)
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=CONFIG.BACKTEST_DAYS)
+        start_date = end_date - timedelta(days=backtest_days)
 
         data_provider = st.session_state.data
         engine = DecisionEngine(data_provider, None, [])
@@ -120,12 +139,13 @@ def ensure_history():
 def run_scan():
     """Escanea el mercado y actualiza las señales."""
     try:
-        symbols = CONFIG.universe
+        symbols = get_config_attr('universe', ['BTC/USDT', 'ETH/USDT'])
         engine = DecisionEngine(st.session_state.data, None, st.session_state.history)
         signals = []
+        timeframe = get_config_attr('TIMEFRAME', '5m')
 
         for sym in symbols:
-            df = st.session_state.data.get_ohlcv(sym, CONFIG.TIMEFRAME, 500)
+            df = st.session_state.data.get_ohlcv(sym, timeframe, 500)
             if df is not None and not df.empty:
                 dec = engine.evaluate(sym, df)
                 if dec is not None:
@@ -154,10 +174,13 @@ ensure_history()
 with st.sidebar:
     st.image("https://img.icons8.com/emoji/96/000000/teddy-bear-emoji.png", width=80)
     st.header("🧸 JUNK TOYS Ω")
-    st.caption(f"v{CONFIG.version}")
-    mode_text = "🔥 FIRM SIGNALS (94% Win Rate)" if CONFIG.FIRM_MODE else "📊 Modo General (86% Win Rate)"
+    st.caption(f"v{get_config_attr('version', '?')}")
+
+    # Modo seguro con fallback
+    firm_mode = get_config_attr('FIRM_MODE', False)
+    mode_text = "🔥 FIRM SIGNALS (94% Win Rate)" if firm_mode else "📊 Modo General (86% Win Rate)"
     st.caption(f"Modo: {mode_text}")
-    st.caption(f"Activos: {len(CONFIG.universe)}")
+    st.caption(f"Activos: {len(get_config_attr('universe', []))}")
 
     history = st.session_state.history
     if history:
@@ -196,7 +219,6 @@ with st.sidebar:
 with tabs[0]:
     st.header("📊 Estado General del Mercado")
 
-    # Métricas principales
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Oportunidades", len(st.session_state.signals))
     if st.session_state.signals:
@@ -209,11 +231,10 @@ with tabs[0]:
         col3.metric("Dirección", "--")
         col4.metric("Expected Edge", "--")
 
-    # Modo actual
-    st.caption(f"Modo: {'🔥 FIRM SIGNALS (94% Win Rate)' if CONFIG.FIRM_MODE else '📊 Modo General (86% Win Rate)'}")
-    st.caption(f"Universo: {len(CONFIG.universe)} activos monitorizados")
+    # Modo y activos
+    st.caption(f"Modo: {'🔥 FIRM SIGNALS (94% Win Rate)' if get_config_attr('FIRM_MODE', False) else '📊 Modo General (86% Win Rate)'}")
+    st.caption(f"Universo: {len(get_config_attr('universe', []))} activos monitorizados")
 
-    # Distribución de señales
     if st.session_state.signals:
         col1, col2 = st.columns(2)
         with col1:
@@ -228,7 +249,6 @@ with tabs[0]:
             fig2 = px.pie(df_app, names='Estado', title="Señales Aprobadas vs Desaprobadas")
             st.plotly_chart(fig2, width='stretch')
 
-    # TOP 5 rápido
     if st.session_state.signals:
         st.subheader("🏆 TOP 5 Oportunidades")
         df_top = pd.DataFrame([{
@@ -258,12 +278,11 @@ with tabs[1]:
         cols[2].metric("Tiempo Abierto", f"{last.get('duration_minutes', 0)} min")
 
         st.caption(f"Régimen: {last.get('regime', 'N/A')}")
-        st.caption(f"Timestamp: {last.get('timestamp', datetime.now()).strftime('%Y-%m-%d %H:%M')}")
+        st.caption(f"Timestamp: {safe_format_timestamp(last.get('timestamp'))}")
         st.caption(f"Trailing Stop usado: {last.get('trailing_stop_used', 0)*100:.2f}%")
         st.caption(f"Break Even aplicado: {'✅ Sí' if last.get('break_even_applied', False) else '❌ No'}")
         st.caption(f"Motivo salida: {last.get('reason_exit', 'N/A')}")
 
-        # Penúltimo trade si existe
         if len(st.session_state.history) >= 2:
             st.divider()
             st.subheader("📌 Penúltimo Trade")
@@ -284,7 +303,6 @@ with tabs[2]:
         analyzer = StreakAnalyzer(st.session_state.history)
         general = analyzer.general
 
-        # Métricas principales
         col1, col2, col3 = st.columns(3)
         col1.metric("Racha de Ganancias", f"{general['win_streaks']['current']}")
         col2.metric("Racha de Pérdidas", f"{general['loss_streaks']['current']}")
@@ -294,14 +312,12 @@ with tabs[2]:
         col1.metric("Máxima Racha Perdedora", f"{general['loss_streaks']['max']}")
         col2.metric("Win Rate Global", f"{general['win_rate']*100:.1f}%")
 
-        # Probabilidades de bloque
         st.subheader("📊 Probabilidades de Bloque (WW, WL, LW, LL)")
         probs = general.get('block_probabilities', {})
         if probs:
             df_probs = pd.DataFrame([probs])
             st.dataframe(df_probs.style.format("{:.1%}"), width='stretch')
 
-        # Rachas por activo
         st.subheader("📈 Rachas por Activo")
         if analyzer.by_asset:
             data = []
@@ -315,11 +331,8 @@ with tabs[2]:
                     'Máx Pérdidas': streaks.get('loss_streaks', {}).get('max', 0)
                 })
             df_asset = pd.DataFrame(data)
-            st.dataframe(df_asset.style.format({
-                'Win Rate': '{:.1%}'
-            }), width='stretch')
+            st.dataframe(df_asset.style.format({'Win Rate': '{:.1%}'}), width='stretch')
 
-        # Rachas por horario
         st.subheader("⏰ Rachas por Horario (UTC)")
         if analyzer.by_hour:
             data = []
@@ -331,11 +344,8 @@ with tabs[2]:
                     'Racha Pérdidas': streaks.get('loss_streaks', {}).get('current', 0)
                 })
             df_hour = pd.DataFrame(data)
-            st.dataframe(df_hour.style.format({
-                'Win Rate': '{:.1%}'
-            }), width='stretch')
+            st.dataframe(df_hour.style.format({'Win Rate': '{:.1%}'}), width='stretch')
 
-        # Rachas por régimen
         st.subheader("🌊 Rachas por Régimen")
         if analyzer.by_regime:
             data = []
@@ -347,11 +357,8 @@ with tabs[2]:
                     'Racha Pérdidas': streaks.get('loss_streaks', {}).get('current', 0)
                 })
             df_regime = pd.DataFrame(data)
-            st.dataframe(df_regime.style.format({
-                'Win Rate': '{:.1%}'
-            }), width='stretch')
+            st.dataframe(df_regime.style.format({'Win Rate': '{:.1%}'}), width='stretch')
 
-        # ¿El trade actual está favorecido?
         st.subheader("🎯 ¿El trade actual está favorecido por la racha histórica?")
         if st.session_state.history:
             current_trade = st.session_state.history[-1]
@@ -374,24 +381,20 @@ with tabs[3]:
 
         estimate = timing.estimate_next_trade()
 
-        # Métricas principales
         col1, col2, col3 = st.columns(3)
         col1.metric("⏰ Tiempo desde último trade", f"{estimate.get('elapsed', 0):.1f} min")
         col2.metric("📊 Tiempo medio entre trades", f"{estimate.get('avg_interval', 0):.1f} min")
         col3.metric("⏳ Tiempo restante esperado", f"{estimate.get('remaining_minutes', 0):.1f} min")
 
-        # Intervalo de confianza
         st.subheader("📈 Intervalo de Confianza (10%-90%)")
         confidence_interval = estimate.get('interval_ci', (0, 0))
         st.metric("Rango estimado", f"{confidence_interval[0]:.1f} - {confidence_interval[1]:.1f} min")
 
-        # Error histórico
         st.subheader("📉 Error Histórico de Predicción")
         col1, col2 = st.columns(2)
         col1.metric("Error", f"{estimate.get('historical_error', 0)*100:.1f}%")
         col2.metric("Precisión", f"{estimate.get('precision', 0)*100:.1f}%")
 
-        # Distribución de intervalos
         st.subheader("📊 Distribución de Intervalos")
         summary = dist.get_summary()
 
@@ -403,14 +406,12 @@ with tabs[3]:
         col1.metric("Mínimo", f"{summary.get('min', 0):.1f} min")
         col2.metric("Máximo", f"{summary.get('max', 0):.1f} min")
 
-        # Percentiles
         st.subheader("📋 Percentiles")
         percentiles = summary.get('percentiles', {})
         if percentiles:
             df_pct = pd.DataFrame([percentiles])
             st.dataframe(df_pct.style.format("{:.1f}"), width='stretch')
 
-        # Estado actual
         elapsed = estimate.get('elapsed', 0)
         mean_interval = estimate.get('avg_interval', 45)
         if elapsed > mean_interval * 1.5:
@@ -420,7 +421,6 @@ with tabs[3]:
         else:
             st.success(f"✅ Tiempo transcurrido: {elapsed:.1f} min ({(elapsed/mean_interval)*100:.0f}% del tiempo medio)")
 
-        # Señales actuales y su relación con la predicción
         if st.session_state.signals:
             st.subheader("🔗 Relación con señales actuales")
             best = st.session_state.signals[0]
@@ -435,7 +435,6 @@ with tabs[3]:
 with tabs[4]:
     st.header("🚀 Próxima Oportunidad Estimada")
     if st.session_state.signals:
-        # Mostrar TOP 5 señales
         st.subheader("📊 TOP 5 Oportunidades")
         for i, signal in enumerate(st.session_state.signals[:5], 1):
             approved = signal.get('approved', False)
@@ -446,7 +445,6 @@ with tabs[4]:
             symbol = signal.get('symbol', 'N/A')
             st.caption(f"#{i} {symbol} | {direction} | Edge: {edge*100:.1f}% | Prob: {prob*100:.1f}% | {status}")
 
-        # Mejor señal
         best = st.session_state.signals[0]
         approved = best.get('approved', False)
 
@@ -462,7 +460,6 @@ with tabs[4]:
         col1.metric("Estado", "✅ Aprobada" if approved else "⚠️ Desaprobada")
         col2.metric("Confianza", f"{best.get('confidence', 0)*100:.1f}%")
 
-        # Detalles de la señal
         st.subheader("📋 Detalles de la Señal")
         cols = st.columns(4)
         cols[0].metric("Entry", f"${best.get('entry_price', 0):.2f}")
@@ -481,7 +478,6 @@ with tabs[4]:
         cols[1].metric("Tiempo hasta TP estimado", f"{best.get('time_to_tp_expected', 0):.1f} min")
         cols[2].metric("Ganancia mínima protegida", f"{best.get('min_protected_gain', 0)*100:.2f}%")
 
-        # Tiempo
         if len(st.session_state.history) >= 2:
             timing = TimingEngine(st.session_state.history)
             estimate = timing.estimate_next_trade()
@@ -490,7 +486,6 @@ with tabs[4]:
             col2.metric("Confianza Temporal", f"{estimate.get('confidence', 0)*100:.1f}%")
             st.caption(f"Precisión histórica: {estimate.get('precision', 0)*100:.1f}%")
 
-        # Justificación estadística
         st.subheader("📊 Justificación Estadística")
         st.caption(f"""
         - **Win Rate Histórico**: {best.get('win_rate_expected', 0)*100:.1f}%
@@ -533,7 +528,6 @@ with tabs[5]:
                 status_text = "APROBADA" if approved else "DESAPROBADA"
                 st.subheader(f"#{i} - {signal['symbol']} {status_emoji} {status_text}")
 
-                # Métricas principales
                 cols = st.columns(5)
                 cols[0].metric("Edge", f"{signal['expected_edge_pct']:.2f}%")
                 cols[1].metric("Score", f"{signal['score']:.1f}")
@@ -541,7 +535,6 @@ with tabs[5]:
                 cols[3].metric("PF Esperado", f"{signal['expected_profit_factor']:.2f}")
                 cols[4].metric("ShunToy", f"{signal['shun_toy_score']:.1f}/10")
 
-                # Detalles completos
                 st.caption(f"""
                 **Entry:** {signal.get('entry_price', 0):.2f} | **SL:** {signal.get('stop_loss', 0):.2f} | **TP:** {signal.get('take_profit', 0):.2f}
                 **Break Even:** Técnico {signal.get('break_even_technical', 0)*100:.2f}% | Estadístico {signal.get('break_even_statistical', 0)*100:.2f}%
@@ -641,17 +634,14 @@ with tabs[7]:
         col1.metric("ShunToy Level", f"{shun['score']:.1f}/10")
         col2.metric("Nivel", shun['level'])
 
-        # Interpretación
         st.caption(shun.get('interpretation', ''))
 
-        # Componentes
         st.subheader("📊 Componentes del ShunToy Level")
         components = shun.get('components', {})
         df_comp = pd.DataFrame([components]).T
         df_comp.columns = ['Score']
         st.dataframe(df_comp.style.format("{:.3f}"), width='stretch')
 
-        # Gráfico de barras de componentes
         fig = go.Figure()
         fig.add_trace(go.Bar(
             x=list(components.keys()),
@@ -705,7 +695,6 @@ with tabs[9]:
     if st.session_state.history:
         metrics = Metrics.compute(st.session_state.history)
 
-        # Métricas principales
         cols = st.columns(4)
         cols[0].metric("Win Rate", f"{metrics.get('win_rate', 0)*100:.1f}%")
         cols[1].metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
@@ -722,7 +711,6 @@ with tabs[9]:
         cols[1].metric("Avg Win", f"{metrics.get('avg_win', 0):.2f}%")
         cols[2].metric("Avg Loss", f"{metrics.get('avg_loss', 0):.2f}%")
 
-        # Rendimiento por activo
         st.subheader("📈 Rendimiento por Activo")
         by_asset = Performance.by_asset(st.session_state.history)
         if by_asset:
@@ -736,7 +724,6 @@ with tabs[9]:
                 'max_drawdown': '{:.2%}'
             }), width='stretch')
 
-        # Rendimiento por horario
         st.subheader("⏰ Rendimiento por Horario (UTC)")
         by_hour = Performance.by_hour(st.session_state.history)
         if by_hour:
@@ -747,7 +734,6 @@ with tabs[9]:
                 'profit_factor': '{:.2f}'
             }), width='stretch')
 
-        # Rendimiento por régimen
         st.subheader("🌊 Rendimiento por Régimen")
         by_regime = Performance.by_regime(st.session_state.history)
         if by_regime:
@@ -766,7 +752,11 @@ with tabs[10]:
     if st.button("Ejecutar Backtest", type="primary"):
         with st.spinner("Ejecutando backtest..."):
             bt = Backtest(st.session_state.data, DecisionEngine(st.session_state.data, None, st.session_state.history))
-            result = bt.run(CONFIG.universe, datetime.now() - timedelta(days=CONFIG.BACKTEST_DAYS), datetime.now())
+            result = bt.run(
+                get_config_attr('universe', ['BTC/USDT', 'ETH/USDT']),
+                datetime.now() - timedelta(days=get_config_attr('BACKTEST_DAYS', 90)),
+                datetime.now()
+            )
             st.session_state.backtest_result = result
             st.success("✅ Backtest completado")
 
@@ -805,7 +795,10 @@ with tabs[11]:
     if st.button("Ejecutar Walk-Forward", type="primary"):
         with st.spinner("Ejecutando Walk-Forward (5 splits)..."):
             wf = WalkForward(st.session_state.data, None, st.session_state.history)
-            result = wf.run(CONFIG.universe, train_days=180, test_days=90, n_splits=5)
+            result = wf.run(
+                get_config_attr('universe', ['BTC/USDT', 'ETH/USDT']),
+                train_days=180, test_days=90, n_splits=5
+            )
             st.session_state.walkforward_result = result
             st.success("✅ Walk-Forward completado")
 
@@ -858,7 +851,6 @@ with tabs[12]:
 
         st.caption(f"Simulaciones: {result.get('n_simulations', 0)} | Trades usados: {result.get('n_trades_used', 0)}")
 
-        # Histograma de capitales finales
         capitals = result.get('all_final_capitals', [])
         if capitals:
             fig = px.histogram(capitals, nbins=50, title="Distribución de Capital Final")
@@ -928,7 +920,6 @@ with tabs[14]:
         col2.metric("Drawdown Actual", f"{dd[-1]:.2f}%")
         col3.metric("Drawdown Promedio", f"{np.mean(dd):.2f}%")
 
-        # Tabla de top 5 drawdowns
         st.subheader("📋 Top 5 Drawdowns")
         dd_sorted = sorted(dd, reverse=True)[:5]
         df_dd = pd.DataFrame({
@@ -961,14 +952,12 @@ with tabs[15]:
         - Riesgo de Ruina {risk_of_ruin*100:.1f}% → {'✅ Bajo' if risk_of_ruin < 0.05 else '⚠️ Moderado' if risk_of_ruin < 0.20 else '🔴 Alto'}
         """)
 
-        # Distribución de PnL
         st.subheader("📊 Distribución de PnL")
         pnls = [t.get('pnl_pct', 0) for t in st.session_state.history]
         fig = px.histogram(pnls, nbins=20, title="Distribución de PnL")
         fig.update_layout(xaxis_title='PnL (%)', yaxis_title='Frecuencia')
         st.plotly_chart(fig, width='stretch')
 
-        # Estadísticas de PnL
         col1, col2, col3 = st.columns(3)
         col1.metric("PnL Promedio", f"{np.mean(pnls)*100:.2f}%")
         col2.metric("PnL Mediana", f"{np.median(pnls)*100:.2f}%")
@@ -984,20 +973,30 @@ with tabs[16]:
         cols_to_show = ['symbol', 'direction', 'entry_price', 'exit_price', 'pnl_pct', 'duration_minutes', 'regime', 'reason_exit', 'timestamp']
         available_cols = [c for c in cols_to_show if c in df_history.columns]
 
+        # Convertir timestamps a string para mostrar
+        if 'timestamp' in df_history.columns:
+            df_history['timestamp'] = df_history['timestamp'].apply(safe_format_timestamp)
+
         st.dataframe(df_history[available_cols].style.format({
             'pnl_pct': '{:.2%}',
             'entry_price': '${:.2f}',
             'exit_price': '${:.2f}'
         }), width='stretch')
 
-        # Estadísticas del historial
         st.subheader("📊 Resumen del Historial")
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Trades", len(df_history))
-        col2.metric("Periodo", f"{df_history['timestamp'].min().strftime('%Y-%m-%d') if 'timestamp' in df_history else 'N/A'} - {df_history['timestamp'].max().strftime('%Y-%m-%d') if 'timestamp' in df_history else 'N/A'}")
+        if 'timestamp' in df_history.columns:
+            try:
+                min_ts = df_history['timestamp'].min()
+                max_ts = df_history['timestamp'].max()
+                col2.metric("Periodo", f"{min_ts} - {max_ts}")
+            except:
+                col2.metric("Periodo", "N/A")
+        else:
+            col2.metric("Periodo", "N/A")
         col3.metric("Activos", df_history['symbol'].nunique() if 'symbol' in df_history else 0)
 
-        # Exportar CSV
         csv = df_history.to_csv(index=False)
         st.download_button(
             label="📥 Descargar CSV",
